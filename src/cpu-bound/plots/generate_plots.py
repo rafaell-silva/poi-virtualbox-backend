@@ -44,6 +44,10 @@ import glob
 import math
 from pathlib import Path
 
+# Garante suporte a UTF-8 no terminal Windows (cp1252 padrão)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -185,25 +189,39 @@ def combine_on_timeline(sys_series: dict, key: str):
 
 def _match_sys_file(exp: dict, sys_data: dict):
     """
-    Encontra o arquivo sys_* cujo nome de arquivo contenha o rótulo do experimento
-    (sem os prefixos exp_/k6_) e o mesmo timestamp. Prefere a correspondência exata.
+    Encontra o arquivo sys_* correspondente ao experimento exp_*/k6_*.
+    Tenta primeiro correspondência por substring de nome/timestamp;
+    como fallback, casa pela quantidade de VUs (ex.: _1vus_, _2vus_, etc.)
+    quando há 1 arquivo sys para aquele nível de VUs.
     """
     label = exp.get("_source_file", "")
     if not label:
         return None
     core = Path(label).stem.replace("exp_", "").replace("k6_", "")
     candidates = [p for p in sys_data if core in Path(p).stem]
-    if not candidates:
-        # Fallback: casa pelo timestamp embutido no rótulo (14 dígitos + Z)
-        ts = exp.get("timestamp_utc", "")
-        token = ts.replace("-", "").replace(":", "").replace(".", "")[:15]  # YYYYMMDDTHHMMSS
-        for p in sys_data:
-            stem = Path(p).stem
-            if token and token in stem.replace(":", ""):
-                candidates.append(p)
-    if not candidates:
-        return None
-    return sorted(candidates, key=len, reverse=True)[0]
+    if candidates:
+        return sorted(candidates, key=len, reverse=True)[0]
+
+    # Fallback 1: casa pelo timestamp embutido no rótulo (YYYYMMDDTHHMM)
+    ts = exp.get("timestamp_utc", "")
+    token = ts.replace("-", "").replace(":", "").replace(".", "")[:13]
+    for p in sys_data:
+        stem = Path(p).stem.replace(":", "").replace("-", "")
+        if token and token in stem:
+            candidates.append(p)
+    if candidates:
+        return sorted(candidates, key=len, reverse=True)[0]
+
+    # Fallback 2: casa pelo nível de demanda (VUs)
+    vus = exp.get("vus") or exp.get("vus_max")
+    if vus is not None:
+        pattern = f"_{int(float(vus))}vus"
+        vu_candidates = [p for p in sys_data if pattern in Path(p).stem]
+        if vu_candidates:
+            # Seleciona o que tem o timestamp mais próximo ou o último
+            return sorted(vu_candidates)[-1]
+
+    return None
 
 
 def _series_mean(rows: list, keys: list):

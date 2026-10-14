@@ -26,11 +26,23 @@
 
 set -euo pipefail
 
-VM_IP="${VM_IP:-192.168.56.10}"
-VM_USER="${VM_USER:-ubuntu}"
-VM_PORT="${VM_PORT:-22}"
+VM_IP="${VM_IP:-127.0.0.1}"
+VM_USER="${VM_USER:-osboxes}"
+VM_PORT="${VM_PORT:-2222}"
 APP_PORT="${APP_PORT:-8000}"
 TARGET_URL="http://${VM_IP}:${APP_PORT}"
+
+# Detecta k6 no PATH ou no local padrão do Windows
+if command -v k6 >/dev/null 2>&1; then
+    K6_BIN="k6"
+elif [ -f "/c/Program Files/k6/k6.exe" ]; then
+    K6_BIN="/c/Program Files/k6/k6.exe"
+elif [ -f "C:/Program Files/k6/k6.exe" ]; then
+    K6_BIN="C:/Program Files/k6/k6.exe"
+else
+    echo "ERRO: k6 não encontrado no PATH nem em 'C:\\Program Files\\k6\\k6.exe'."
+    exit 1
+fi
 
 OUT_DIR="data/results"
 mkdir -p "${OUT_DIR}"
@@ -73,7 +85,7 @@ for VUS in "${VUS_LEVELS[@]}"; do
     SYS_CSV_LOCAL="${OUT_DIR}/sys_vm_${RUN_ID}.csv"
     echo "  [SSH] Iniciando system_monitor.py na VM (target-pid=${APP_PID:-n/a})..."
     VM_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
-        "nohup python3 /opt/poi-app/metrics/collectors/system_monitor.py \
+        "nohup /opt/poi-memory/.venv/bin/python /opt/poi-memory/metrics/collectors/system_monitor.py \
             --label ${RUN_ID} --duration 120 --interval 1.0 --machine vm \
             ${APP_PID:+--target-pid ${APP_PID} --include-children} \
             --out-dir /tmp > /tmp/monitor_${RUN_ID}.log 2>&1 &
@@ -84,7 +96,7 @@ for VUS in "${VUS_LEVELS[@]}"; do
 
     # 2. Executa geração de carga externa via k6
     echo "  [k6] Gerando carga externa (${VUS} VUs durante ${DURATION})..."
-    k6 run k6/load_ramp.js \
+    "${K6_BIN}" run k6/load_ramp.js \
         -e "TARGET_URL=${TARGET_URL}" \
         -e "SIZE_MIB=${SIZE_MIB}" \
         -e "ITERATIONS=${ITERATIONS}" \

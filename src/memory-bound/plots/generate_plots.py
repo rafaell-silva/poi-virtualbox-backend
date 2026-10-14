@@ -185,25 +185,33 @@ def combine_on_timeline(sys_series: dict, key: str):
 
 def _match_sys_file(exp: dict, sys_data: dict):
     """
-    Encontra o arquivo sys_* cujo nome de arquivo contenha o rótulo do experimento
-    (sem os prefixos exp_/k6_) e o mesmo timestamp. Prefere a correspondência exata.
+    Encontra o arquivo sys_* correspondente ao experimento exp_*/k6_*.
     """
     label = exp.get("_source_file", "")
     if not label:
         return None
     core = Path(label).stem.replace("exp_", "").replace("k6_", "")
     candidates = [p for p in sys_data if core in Path(p).stem]
-    if not candidates:
-        # Fallback: casa pelo timestamp embutido no rótulo (14 dígitos + Z)
-        ts = exp.get("timestamp_utc", "")
-        token = ts.replace("-", "").replace(":", "").replace(".", "")[:15]  # YYYYMMDDTHHMMSS
-        for p in sys_data:
-            stem = Path(p).stem
-            if token and token in stem.replace(":", ""):
-                candidates.append(p)
-    if not candidates:
-        return None
-    return sorted(candidates, key=len, reverse=True)[0]
+    if candidates:
+        return sorted(candidates, key=len, reverse=True)[0]
+
+    ts = exp.get("timestamp_utc", "")
+    token = ts.replace("-", "").replace(":", "").replace(".", "")[:13]
+    for p in sys_data:
+        stem = Path(p).stem.replace(":", "").replace("-", "")
+        if token and token in stem:
+            candidates.append(p)
+    if candidates:
+        return sorted(candidates, key=len, reverse=True)[0]
+
+    vus = exp.get("vus") or exp.get("vus_max")
+    if vus is not None:
+        pattern = f"_{int(float(vus))}vus"
+        vu_candidates = [p for p in sys_data if pattern in Path(p).stem]
+        if vu_candidates:
+            return sorted(vu_candidates)[-1]
+
+    return None
 
 
 def _series_mean(rows: list, keys: list):
