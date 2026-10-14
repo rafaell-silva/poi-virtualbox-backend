@@ -60,8 +60,8 @@ CHUNK_KIB="${CHUNK_KIB:-64}"
 DURATION="${DURATION:-45s}"
 SERVICE="${SERVICE:-poi-cpu}"
 
-# Níveis de demanda conservadores para 1 vCPU / 1 GiB RAM
-VUS_LEVELS=(1 2 4 8 16)
+# Níveis de demanda programados (1..32 VUs)
+VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
 
 echo "======================================================="
 echo " Experimento VM (CPU-bound) — Cenário: ${SCENARIO}"

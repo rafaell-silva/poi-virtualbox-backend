@@ -65,8 +65,8 @@ DWELL_MS="${DWELL_MS:-200}"     # retenção do buffer (é ela que empilha o RSS
 SERVICE="${SERVICE:-poi-app}"
 DURATION="${DURATION:-45s}"
 
-# Níveis de demanda conservadores para teste em 1 vCPU / 1 GiB RAM
-VUS_LEVELS=(1 2 4 8 16)
+# Níveis de demanda programados (1..32 VUs)
+VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
 
 echo "======================================================="
 echo " Experimento VM — Cenário: ${SCENARIO}"
