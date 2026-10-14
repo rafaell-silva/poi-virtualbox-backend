@@ -38,6 +38,8 @@ elif [ -f "C:/Program Files/k6/k6.exe" ]; then
 else
     echo "ERRO: k6 não encontrado no PATH nem em 'C:\\Program Files\\k6\\k6.exe'."
     exit 1
+fi
+
 # Determina próximo diretório sequencial para data/resultsN e plots/outputN
 BASE_DATA_DIR="data"
 BASE_PLOTS_DIR="plots"
