@@ -587,15 +587,38 @@ def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, sh
 # Main
 # --------------------------------------------------------------------------- #
 
+def resolve_default_dirs(results_dir: str, out_dir: str):
+    """
+    Se os diretórios padrão data/results ou plots/output não existirem ou estiverem vazios,
+    detecta automaticamente a pasta versionada mais recente (ex: data/results2 -> plots/output2).
+    """
+    if results_dir == "data/results" and (not os.path.exists(results_dir) or not os.listdir(results_dir)):
+        import re
+        cands = []
+        for p in glob.glob("data/results*"):
+            m = re.search(r"results(\d+)$", p)
+            if m and os.path.isdir(p) and os.listdir(p):
+                cands.append((int(m.group(1)), p))
+        if cands:
+            cands.sort(key=lambda x: x[0])
+            latest_idx, latest_path = cands[-1]
+            results_dir = latest_path
+            if out_dir == "plots/output":
+                out_dir = f"plots/output{latest_idx}"
+
+    return results_dir, out_dir
+
+
 def main():
     args = parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
+    results_dir, out_dir = resolve_default_dirs(args.results_dir, args.out_dir)
+    os.makedirs(out_dir, exist_ok=True)
 
-    experiments, sys_data = load_all_experiments(args.results_dir)
+    experiments, sys_data = load_all_experiments(results_dir)
 
     if not experiments and not sys_data:
         print(
-            f"[plots] Nenhum dado encontrado em '{args.results_dir}'.\n"
+            f"[plots] Nenhum dado encontrado em '{results_dir}'.\n"
             "        Execute primeiro os experimentos com:\n"
             "          python metrics/collectors/run_experiment.py --start-server ...\n"
             "        ou com k6:\n"
@@ -619,21 +642,21 @@ def main():
     res_series = {p: sys_series[p] for p in res_paths}
     proc_series = {p: sys_series[p] for p in proc_paths}
 
-    plot_latency(lat_points, args.out_dir, args.show)
-    plot_rps(rps_points, args.out_dir, args.show)
-    _plot_over_time(res_series, args.out_dir, args.show,
+    plot_latency(lat_points, out_dir, args.show)
+    plot_rps(rps_points, out_dir, args.show)
+    _plot_over_time(res_series, out_dir, args.show,
                     key="cpu", ylabel="CPU total (%)",
                     title="Utilização de CPU ao longo do tempo",
                     filename="cpu_over_time.png", ylim=(0, 105))
-    _plot_over_time(res_series, args.out_dir, args.show,
+    _plot_over_time(res_series, out_dir, args.show,
                     key="mem", ylabel="Memória usada (%)",
                     title="Consumo de memória ao longo do tempo",
                     filename="memory_over_time.png", ylim=(0, 105))
-    plot_proc_resources(proc_series, args.out_dir, args.show)
-    plot_disk(res_series, args.out_dir, args.show)
-    plot_demand_vs_resources(experiments, sys_data, args.out_dir, args.show)
+    plot_proc_resources(proc_series, out_dir, args.show)
+    plot_disk(res_series, out_dir, args.show)
+    plot_demand_vs_resources(experiments, sys_data, out_dir, args.show)
 
-    print(f"\n[plots] Concluído. Arquivos em '{args.out_dir}/'.")
+    print(f"\n[plots] Concluído. Arquivos em '{out_dir}/'.")
 
 
 if __name__ == "__main__":
