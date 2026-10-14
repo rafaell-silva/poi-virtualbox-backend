@@ -1,0 +1,15 @@
+metric,value
+test_run_id,k6_cpu_1000it_64ki_2026-10-14T04-06-28-207Z
+timestamp_utc,2026-10-14T04:06:28.207Z
+workload_model,closed_vu_ramp
+target_url,http://127.0.0.1:8000
+intensity,1000
+chunk_kib,64
+total_requests,323
+http_reqs_per_second,7.170067390042704
+vus_max,1
+http_req_duration_avg_ms,38.81341145510838
+http_req_duration_p90_ms,40.00154
+http_req_duration_p95_ms,41.14824
+http_req_duration_max_ms,73.416
+http_req_failed_rate,0
