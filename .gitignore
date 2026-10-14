@@ -4,3 +4,13 @@ __pycache__/
 *.pyo
 *.log
 .env
+
+# Resultados de benchmarks e experimentos
+data/results/
+data/results*/
+data/result*/
+plots/output/
+plots/output*/
+plots/plot*/
+**/data/results*
+**/plots/output*
