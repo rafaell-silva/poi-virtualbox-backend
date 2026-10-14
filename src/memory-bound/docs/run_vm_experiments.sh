@@ -55,7 +55,7 @@ SERVICE="${SERVICE:-poi-app}"
 DURATION="${DURATION:-45s}"
 
 # Níveis de demanda conservadores para teste em 1 vCPU / 1 GiB RAM
-VUS_LEVELS=(1 2 4 8 12)
+VUS_LEVELS=(1 2 4 8 16)
 
 echo "======================================================="
 echo " Experimento VM — Cenário: ${SCENARIO}"

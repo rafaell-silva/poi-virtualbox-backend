@@ -49,7 +49,7 @@ ITERATIONS="${ITERATIONS:-1}"
 DURATION="${DURATION:-45s}"
 
 # Níveis de demanda conservadores para 1 vCPU / 1 GiB RAM
-VUS_LEVELS=(1 2 4 8 12)
+VUS_LEVELS=(1 2 4 8 16)
 
 echo "======================================================="
 echo " Experimento VM (IO-bound) — Cenário: ${SCENARIO}"
