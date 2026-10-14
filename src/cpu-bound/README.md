@@ -67,16 +67,31 @@ cpu-bound/
 
 ### 3.1. Ambiente virtual
 
+**No Linux / VM (Bash):**
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**No Windows (Git Bash):**
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
+```
+
+**No Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 ### 3.2. Iniciar a aplicação
 
-```bash
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-```
+- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
 
 ### 3.3. Teste rápido
 
@@ -91,6 +106,21 @@ curl "http://127.0.0.1:8000/process-image?intensity=1000&chunk_kib=64"
 ./run_local_sweep.sh
 # personalizando:
 INTENSITY=2000 CHUNK_KIB=64 VUS_LEVELS="1 2 4 8" DURATION=20 ./run_local_sweep.sh
+```
+
+### 3.5. Execução via Docker / Docker Compose
+
+Você também pode subir o container isolado usando Docker:
+
+**Com Docker Compose:**
+```bash
+docker compose up --build
+```
+
+**Com Docker puro:**
+```bash
+docker build -t poi-cpu-bound app/
+docker run --rm -p 8000:8000 --cpus="0.5" --memory="256m" poi-cpu-bound
 ```
 
 O script sobe o uvicorn, inicia o `system_monitor.py` e executa cada nível de

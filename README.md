@@ -28,12 +28,33 @@ Cada projeto tem seu próprio README com instruções detalhadas de execução l
 
 ## Execução local (resumo)
 
+### No Linux / VM (Bash)
 ```bash
 cd src/cpu-bound          # ou src/memory-bound / src/io-bound
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-./run_local_sweep.sh      # sobe o servidor, coleta métricas, roda o k6 e gera os gráficos
+source .venv/bin/activate
+pip install -r requirements.txt
+./run_local_sweep.sh      # sobe o servidor, coleta métricas, executa carga e gera os gráficos
 ```
+
+### No Windows (Git Bash ou PowerShell)
+1. **Criar e ativar o ambiente:**
+   - No Git Bash:
+     ```bash
+     cd src/cpu-bound     # ou src/memory-bound / src/io-bound
+     python -m venv .venv
+     source .venv/Scripts/activate
+     pip install -r requirements.txt
+     ./run_local_sweep.sh
+     ```
+   - No PowerShell:
+     ```powershell
+     cd src\cpu-bound
+     python -m venv .venv
+     .\.venv\Scripts\Activate.ps1
+     pip install -r requirements.txt
+     uvicorn app.main:app --host 127.0.0.1 --port 8000
+     ```
 
 Requisitos: Python 3.12, [k6](https://k6.io/) instalado no host.
 

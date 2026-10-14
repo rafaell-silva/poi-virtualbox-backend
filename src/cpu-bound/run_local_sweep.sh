@@ -28,8 +28,13 @@ DURATION="${DURATION:-20}" # 20s por nível de demanda
 VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
-VENV_PY="${ROOT_DIR}/.venv/bin/python"
+if [ -d "${ROOT_DIR}/.venv/Scripts" ]; then
+    VENV_UV="${ROOT_DIR}/.venv/Scripts/uvicorn"
+    VENV_PY="${ROOT_DIR}/.venv/Scripts/python"
+else
+    VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
+    VENV_PY="${ROOT_DIR}/.venv/bin/python"
+fi
 DATA_DIR="${ROOT_DIR}/data/results"
 PLOTS_DIR="${ROOT_DIR}/plots/output"
 mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
@@ -53,7 +58,17 @@ finally:
 
 # Função para liberar a porta antes de iniciar
 kill_port() {
-    lsof -ti tcp:"${PORT}" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    "${VENV_PY}" -c '
+import socket, sys, psutil
+port = int(sys.argv[1])
+for proc in psutil.process_iter(["pid", "connections"]):
+    try:
+        for c in (proc.info.get("connections") or []):
+            if c.laddr and c.laddr.port == port:
+                proc.kill()
+    except Exception:
+        pass
+' "${PORT}" 2>/dev/null || true
     sleep 0.5
     if port_in_use "${PORT}"; then
         echo "ERRO: a porta ${PORT} já está em uso e não pertence a um processo do host."
@@ -91,10 +106,8 @@ validate_server() {
     local logged_pid
     logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
     if [ -n "${logged_pid}" ] && [ "${logged_pid}" != "${pid}" ]; then
-        echo "ERRO: o uvicorn reportou o PID ${logged_pid}, mas \$! capturou ${pid}."
-        echo "      O processo monitorado não é o servidor que responde."
-        kill "${pid}" 2>/dev/null || true
-        exit 1
+        echo "      Nota: Ajustando SERVER_PID de ${pid} para PID nativo ${logged_pid}."
+        SERVER_PID="${logged_pid}"
     fi
     if ! "${VENV_PY}" -c '
 import sys, psutil
@@ -106,11 +119,12 @@ except psutil.NoSuchProcess:
 if p.status() == psutil.STATUS_ZOMBIE:
     sys.exit(1)
 sys.exit(0 if p.memory_info().rss > 0 else 1)
-' "${pid}"; then
-        echo "ERRO: o PID ${pid} não é um processo vivo com RSS > 0."
+' "${SERVER_PID}"; then
+        echo "ERRO: o PID ${SERVER_PID} não é um processo vivo com RSS > 0."
         echo "      Log: /tmp/sweep_uvicorn.log"
         cat /tmp/sweep_uvicorn.log
         kill "${pid}" 2>/dev/null || true
+        kill "${SERVER_PID}" 2>/dev/null || true
         exit 1
     fi
 }
@@ -126,6 +140,7 @@ echo "[1/4] Iniciando servidor uvicorn (Porta: ${PORT})..."
 kill_port
 ${VENV_UV} app.main:app --host 127.0.0.1 --port "${PORT}" \
     --workers "${WORKERS}" > /tmp/sweep_uvicorn.log 2>&1 &
+SHELL_PID=$!
 SERVER_PID=$!
 echo "      Uvicorn ativo com PID=${SERVER_PID}"
 
@@ -140,8 +155,8 @@ for i in $(seq 1 30); do
     sleep 0.5
 done
 
-if [ "${SERVER_READY}" -ne 1 ] || ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-    echo "ERRO: o servidor uvicorn (PID ${SERVER_PID}) não iniciou/respondeu corretamente."
+if [ "${SERVER_READY}" -ne 1 ]; then
+    echo "ERRO: o servidor uvicorn não iniciou/respondeu corretamente."
     cat /tmp/sweep_uvicorn.log
     kill "${SERVER_PID}" 2>/dev/null || true
     exit 1
@@ -164,8 +179,9 @@ cleanup() {
     echo ""
     echo "[Cleanup] Encerrando servidor e monitor de métricas..."
     kill "${SERVER_PID}" 2>/dev/null || true
+    [ "${SHELL_PID}" != "${SERVER_PID}" ] && kill "${SHELL_PID}" 2>/dev/null || true
+    taskkill //F //PID "${SERVER_PID}" 2>/dev/null || true
     kill "${MONITOR_PID}" 2>/dev/null || true
-    wait "${SERVER_PID}" 2>/dev/null || true
     wait "${MONITOR_PID}" 2>/dev/null || true
 }
 trap cleanup EXIT

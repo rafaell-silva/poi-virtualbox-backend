@@ -62,20 +62,53 @@ Para proteger o sistema operacional (especialmente em ambientes com 1 GiB de RAM
 ## 4. Instruções de Instalação e Execução Local
 
 ### 4.1. Ambiente Virtual
+
+**No Linux / VM (Bash):**
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-### 4.2. Iniciar a Aplicação
+
+**No Windows (Git Bash):**
 ```bash
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
 ```
+
+**No Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### 4.2. Iniciar a Aplicação
+
+- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
 
 ### 4.3. Execução Local
 ```bash
 ./run_local_sweep.sh
 # personalizando:
 SIZE_MIB=8 DWELL_MS=200 VUS_LEVELS="1 2 4 8 16 32" DURATION=20 ./run_local_sweep.sh
+```
+
+### 4.4. Execução via Docker / Docker Compose
+
+Você também pode subir o container isolado usando Docker:
+
+**Com Docker Compose:**
+```bash
+docker compose up --build
+```
+
+**Com Docker puro:**
+```bash
+docker build -t poi-memory-bound app/
+docker run --rm -p 8000:8000 --cpus="1.0" --memory="256m" poi-memory-bound
 ```
 
 O script sobe o uvicorn, inicia o `system_monitor.py` e executa cada nível de
