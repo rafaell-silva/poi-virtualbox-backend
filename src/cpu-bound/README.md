@@ -67,16 +67,31 @@ cpu-bound/
 
 ### 3.1. Ambiente virtual
 
+**No Linux / VM (Bash):**
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**No Windows (Git Bash):**
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
+```
+
+**No Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 ### 3.2. Iniciar a aplicação
 
-```bash
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-```
+- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
 
 ### 3.3. Teste rápido
 

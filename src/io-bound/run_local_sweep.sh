@@ -19,8 +19,13 @@ DURATION="${DURATION:-20}" # 20s por nível de demanda
 VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
-VENV_PY="${ROOT_DIR}/.venv/bin/python"
+if [ -d "${ROOT_DIR}/.venv/Scripts" ]; then
+    VENV_UV="${ROOT_DIR}/.venv/Scripts/uvicorn"
+    VENV_PY="${ROOT_DIR}/.venv/Scripts/python"
+else
+    VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
+    VENV_PY="${ROOT_DIR}/.venv/bin/python"
+fi
 DATA_DIR="${ROOT_DIR}/data/results"
 PLOTS_DIR="${ROOT_DIR}/plots/output"
 mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
@@ -28,12 +33,35 @@ mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
 TS_START=$(date -u +%Y%m%dT%H%M%SZ)
 SWEEP_RUN_ID="sweep_${SIZE_MIB}m"
 
+# Função para verificar se a porta está respondendo
+port_in_use() {
+    "${VENV_PY}" -c '
+import socket, sys
+s = socket.socket()
+s.settimeout(1.0)
+try:
+    sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+finally:
+    s.close()
+' "$1"
+}
+
 # Função para liberar a porta antes de iniciar
 kill_port() {
-    lsof -ti tcp:"${PORT}" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    "${VENV_PY}" -c '
+import socket, sys, psutil
+port = int(sys.argv[1])
+for proc in psutil.process_iter(["pid", "connections"]):
+    try:
+        for c in (proc.info.get("connections") or []):
+            if c.laddr and c.laddr.port == port:
+                proc.kill()
+    except Exception:
+        pass
+' "${PORT}" 2>/dev/null || true
     sleep 0.5
-    if lsof -ti tcp:"${PORT}" >/dev/null 2>&1; then
-        echo "ERRO: porta ${PORT} ainda ocupada por outro processo (lsof -i tcp:${PORT})."
+    if port_in_use "${PORT}"; then
+        echo "ERRO: porta ${PORT} ainda ocupada por outro processo."
         exit 1
     fi
 }
@@ -49,6 +77,7 @@ echo "[1/4] Iniciando servidor uvicorn (Porta: ${PORT})..."
 kill_port
 ${VENV_UV} app.main:app --host 127.0.0.1 --port "${PORT}" \
     --workers "${WORKERS}" > /tmp/sweep_uvicorn.log 2>&1 &
+SHELL_PID=$!
 SERVER_PID=$!
 echo "      Uvicorn ativo com PID=${SERVER_PID}"
 
@@ -63,11 +92,17 @@ for i in $(seq 1 30); do
     sleep 0.5
 done
 
-if [ "${SERVER_READY}" -ne 1 ] || ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-    echo "ERRO: o servidor uvicorn (PID ${SERVER_PID}) não iniciou/respondeu corretamente."
+if [ "${SERVER_READY}" -ne 1 ]; then
+    echo "ERRO: o servidor uvicorn não iniciou/respondeu corretamente."
     cat /tmp/sweep_uvicorn.log
     kill "${SERVER_PID}" 2>/dev/null || true
     exit 1
+fi
+
+local_logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+if [ -n "${local_logged_pid}" ] && [ "${local_logged_pid}" != "${SERVER_PID}" ]; then
+    echo "      Nota: Ajustando SERVER_PID de ${SERVER_PID} para PID nativo ${local_logged_pid}."
+    SERVER_PID="${local_logged_pid}"
 fi
 
 echo "[2/4] Iniciando coletor de métricas do sistema com ID: ${SWEEP_RUN_ID}_all..."
@@ -86,8 +121,9 @@ cleanup() {
     echo ""
     echo "[Cleanup] Encerrando servidor e monitor de métricas..."
     kill "${SERVER_PID}" 2>/dev/null || true
+    [ "${SHELL_PID}" != "${SERVER_PID}" ] && kill "${SHELL_PID}" 2>/dev/null || true
+    taskkill //F //PID "${SERVER_PID}" 2>/dev/null || true
     kill "${MONITOR_PID}" 2>/dev/null || true
-    wait "${SERVER_PID}" 2>/dev/null || true
     wait "${MONITOR_PID}" 2>/dev/null || true
 }
 trap cleanup EXIT

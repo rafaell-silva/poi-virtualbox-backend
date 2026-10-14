@@ -61,16 +61,33 @@ io-bound/
 ## 3. Instalação e Execução Local
 
 ### 3.1. Ambiente virtual
+
+**No Linux / VM (Bash):**
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**No Windows (Git Bash):**
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
+```
+
+**No Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 ### 3.2. Iniciar a aplicação
-```bash
-IO_DIR=/tmp/io_test .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-```
-> Para experimentos reais, substitua `IO_DIR` por um volume de disco (não tmpfs).
+
+- **Linux / Git Bash:** `IO_DIR=/tmp/io_test uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **PowerShell:** `$env:IO_DIR="C:\temp\io_test"; uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+> Para experimentos reais, aponte `IO_DIR` para um volume de disco (não tmpfs).
 
 ### 3.3. Teste rápido
 ```bash
