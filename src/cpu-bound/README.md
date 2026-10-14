@@ -93,6 +93,21 @@ curl "http://127.0.0.1:8000/process-image?intensity=1000&chunk_kib=64"
 INTENSITY=2000 CHUNK_KIB=64 VUS_LEVELS="1 2 4 8" DURATION=20 ./run_local_sweep.sh
 ```
 
+### 3.5. Execução via Docker / Docker Compose
+
+Você também pode subir o container isolado usando Docker:
+
+**Com Docker Compose:**
+```bash
+docker compose up --build
+```
+
+**Com Docker puro:**
+```bash
+docker build -t poi-cpu-bound app/
+docker run --rm -p 8000:8000 --cpus="0.5" --memory="256m" poi-cpu-bound
+```
+
 O script sobe o uvicorn, inicia o `system_monitor.py` e executa cada nível de
 demanda via `run_experiment.py` — **ambos recebem o PID do servidor** (`--target-pid`,
 com `--include-children`), antes de gerar os gráficos.

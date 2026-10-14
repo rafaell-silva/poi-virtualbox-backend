@@ -85,6 +85,21 @@ curl "http://127.0.0.1:8000/process?size_mb=8&iterations=1"
 SIZE_MIB=8 ITERATIONS=1 VUS_LEVELS="1 2 4 8" DURATION=20 IO_DIR=/data/io ./run_local_sweep.sh
 ```
 
+### 3.5. Execução via Docker / Docker Compose
+
+Você também pode subir o container isolado usando Docker:
+
+**Com Docker Compose:**
+```bash
+docker compose up --build
+```
+
+**Com Docker puro:**
+```bash
+docker build -t poi-io-bound app/
+docker run --rm -p 8000:8000 --cpus="1.0" --memory="512m" -e IO_DIR=/tmp poi-io-bound
+```
+
 ---
 
 ## 4. Geração de Carga com k6

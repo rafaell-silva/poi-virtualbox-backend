@@ -78,6 +78,21 @@ python3 -m venv .venv
 SIZE_MIB=8 DWELL_MS=200 VUS_LEVELS="1 2 4 8 16 32" DURATION=20 ./run_local_sweep.sh
 ```
 
+### 4.4. Execução via Docker / Docker Compose
+
+Você também pode subir o container isolado usando Docker:
+
+**Com Docker Compose:**
+```bash
+docker compose up --build
+```
+
+**Com Docker puro:**
+```bash
+docker build -t poi-memory-bound app/
+docker run --rm -p 8000:8000 --cpus="1.0" --memory="256m" poi-memory-bound
+```
+
 O script sobe o uvicorn, inicia o `system_monitor.py` e executa cada nível de
 demanda via `run_experiment.py` — **ambos recebem o PID do servidor** (`--target-pid`,
 com `--include-children`), antes de gerar os gráficos.
