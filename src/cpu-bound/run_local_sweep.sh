@@ -35,8 +35,18 @@ else
     VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
     VENV_PY="${ROOT_DIR}/.venv/bin/python"
 fi
-DATA_DIR="${ROOT_DIR}/data/results"
-PLOTS_DIR="${ROOT_DIR}/plots/output"
+# Determina próximo diretório sequencial para data/resultsN e plots/outputN
+BASE_DATA_DIR="${ROOT_DIR}/data"
+BASE_PLOTS_DIR="${ROOT_DIR}/plots"
+mkdir -p "${BASE_DATA_DIR}" "${BASE_PLOTS_DIR}"
+
+idx=1
+while [ -d "${BASE_DATA_DIR}/results${idx}" ] || [ -d "${BASE_PLOTS_DIR}/output${idx}" ]; do
+    idx=$((idx + 1))
+done
+
+DATA_DIR="${BASE_DATA_DIR}/results${idx}"
+PLOTS_DIR="${BASE_PLOTS_DIR}/output${idx}"
 mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
 
 TS_START=$(date -u +%Y%m%dT%H%M%SZ)
