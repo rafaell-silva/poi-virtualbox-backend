@@ -25,6 +25,17 @@ const INTENSITY = parseInt(__ENV.INTENSITY || '1000', 10);
 const CHUNK_KIB = parseInt(__ENV.CHUNK_KIB || '64', 10);
 const OUT_DIR = (__ENV.OUT_DIR || 'data/results').replace(/\/+$/, '');
 
+// Metadados de execução (join com o CSV do system_monitor).
+const RUN_ID = __ENV.RUN_ID || "";
+const PROFILE = "cpu";
+const SCENARIO = __ENV.SCENARIO || "";
+const VCPUS = __ENV.VCPUS || "";
+const RAM_GIB = __ENV.RAM_GIB || "";
+const WORKERS = __ENV.WORKERS || "";
+const REQUEST_MIX = __ENV.REQUEST_MIX || __ENV.MIX || "uniform";
+const REP = __ENV.REP || "";
+
+
 const WORKLOAD_URL = `${BASE_URL}/process-image?intensity=${INTENSITY}&chunk_kib=${CHUNK_KIB}`;
 
 // Nível de demanda fixo quando VUS e DURATION são informados por -e (usado pelo
@@ -110,6 +121,16 @@ export function handleSummary(data) {
   const rows = [
     'metric,value',
     `test_run_id,k6_cpu_${INTENSITY}it_${CHUNK_KIB}ki_${ts}`,
+    `run_id,${RUN_ID}`,
+    `profile,${PROFILE}`,
+    `scenario,${SCENARIO}`,
+    `vcpus,${VCPUS}`,
+    `ram_gib,${RAM_GIB}`,
+    `workers,${WORKERS}`,
+    `request_mix,${REQUEST_MIX}`,
+    `rep,${REP}`,
+    `ended_at,${new Date().toISOString()}`,
+    `duration_s,${((data.state && data.state.testRunDurationMs) || 0) / 1000}`,
     `timestamp_utc,${new Date().toISOString()}`,
     `workload_model,closed_vu_ramp`,
     `target_url,${BASE_URL}`,

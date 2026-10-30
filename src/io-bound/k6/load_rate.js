@@ -49,6 +49,17 @@ const MAX_VUS = parseInt(__ENV.MAX_VUS || "50", 10);
 
 const OUT_DIR = (__ENV.OUT_DIR || "data/results").replace(/\/+$/, "");
 
+// Metadados de execução (join com o CSV do system_monitor).
+const RUN_ID = __ENV.RUN_ID || "";
+const PROFILE = "io";
+const SCENARIO = __ENV.SCENARIO || "";
+const VCPUS = __ENV.VCPUS || "";
+const RAM_GIB = __ENV.RAM_GIB || "";
+const WORKERS = __ENV.WORKERS || "";
+const REQUEST_MIX = __ENV.REQUEST_MIX || __ENV.MIX || "uniform";
+const REP = __ENV.REP || "";
+
+
 const WORKLOAD_URL = `${TARGET_URL}/process?size_mb=${SIZE_MIB}&iterations=${ITERATIONS}`;
 
 // -------------------------------------------------------------------------- //
@@ -191,6 +202,16 @@ export function handleSummary(data) {
   const rows = [
     "metric,value",
     `test_run_id,k6_rate_${SIZE_MIB}mib_${ts}`,
+    `run_id,${RUN_ID}`,
+    `profile,${PROFILE}`,
+    `scenario,${SCENARIO}`,
+    `vcpus,${VCPUS}`,
+    `ram_gib,${RAM_GIB}`,
+    `workers,${WORKERS}`,
+    `request_mix,${REQUEST_MIX}`,
+    `rep,${REP}`,
+    `ended_at,${new Date().toISOString()}`,
+    `duration_s,${((data.state && data.state.testRunDurationMs) || 0) / 1000}`,
     `timestamp_utc,${new Date().toISOString()}`,
     `workload_model,open_arrival_rate`,
     `target_url,${TARGET_URL}`,
