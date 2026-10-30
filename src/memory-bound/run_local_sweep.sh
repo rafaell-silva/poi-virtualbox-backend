@@ -119,7 +119,13 @@ validate_server() {
         exit 1
     fi
     local logged_pid
-    logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    # Com --workers N o uvicorn registra um "parent process" (supervisor) e um
+    # "server process" por worker. Monitorar o supervisor com --include-children
+    # agrega todos os workers; monitorar só um worker subestima a CPU/RSS.
+    logged_pid=$(sed -n 's/.*Started parent process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    if [ -z "${logged_pid}" ]; then
+        logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    fi
     if [ -n "${logged_pid}" ] && [ "${logged_pid}" != "${pid}" ]; then
         echo "      Nota: Ajustando SERVER_PID de ${pid} para PID nativo ${logged_pid}."
         SERVER_PID="${logged_pid}"

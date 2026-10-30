@@ -106,7 +106,11 @@ if [ "${SERVER_READY}" -ne 1 ]; then
     exit 1
 fi
 
-local_logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+# Prefere o supervisor ("parent process") para agregar todos os workers.
+local_logged_pid=$(sed -n 's/.*Started parent process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+if [ -z "${local_logged_pid}" ]; then
+    local_logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+fi
 if [ -n "${local_logged_pid}" ] && [ "${local_logged_pid}" != "${SERVER_PID}" ]; then
     echo "      Nota: Ajustando SERVER_PID de ${SERVER_PID} para PID nativo ${local_logged_pid}."
     SERVER_PID="${local_logged_pid}"
