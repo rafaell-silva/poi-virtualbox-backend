@@ -15,6 +15,12 @@ Uso:
     python plots/generate_plots.py
     python plots/generate_plots.py --results-dir data/results --out-dir plots/output
 
+    # listar run_ids e metadados disponíveis (não gera gráficos):
+    python plots/generate_plots.py --list-runs
+
+    # selecionar uma configuração e ignorar CSVs legacy:
+    python plots/generate_plots.py --exclude-legacy --workers 8 --request-mix mixed
+
 IMPORTANTE:
     Os gráficos são gerados a partir de medições reais.  Se não houver dados
     suficientes, o script informa quais arquivos estão faltando e termina sem
@@ -36,6 +42,13 @@ def parse_args():
     p.add_argument("--results-dir", default="data/results")
     p.add_argument("--out-dir", default="plots/output")
     p.add_argument("--show", action="store_true", help="Exibir gráficos na tela.")
+    p.add_argument("--scenario", default="", help="Filtra por cenário (lista separada por vírgula).")
+    p.add_argument("--workers", default="", help="Filtra por nº de workers (lista separada por vírgula).")
+    p.add_argument("--request-mix", default="", help="Filtra por mix: uniform,mixed (lista separada por vírgula).")
+    p.add_argument("--rep", default="", help="Filtra por repetição (lista separada por vírgula).")
+    p.add_argument("--run-id", default="", help="Filtra por run_id exato (lista separada por vírgula).")
+    p.add_argument("--exclude-legacy", action="store_true", help="Ignora CSVs sem run_id (legacy).")
+    p.add_argument("--list-runs", action="store_true", help="Lista run_ids/metadados e não gera gráficos.")
     return p.parse_args()
 
 
@@ -90,6 +103,126 @@ def load_all_experiments(results_dir: str):
             print(f"[warn] Ignorando {f}: {e}")
 
     return experiments, sys_data
+
+
+def _split_filter(value: str) -> set:
+    return {v.strip() for v in (value or "").split(",") if v.strip()}
+
+
+def _exp_value(exp: dict, key: str) -> str:
+    return (exp.get(key) or "").strip()
+
+
+def _meta_matches(record: dict, scenarios: set, workers: set, mixes: set,
+                  reps: set, run_ids: set) -> bool:
+    run_id = (record.get("run_id") or "").strip()
+    if not run_id:
+        return False
+    if scenarios and (record.get("scenario") or "").strip() not in scenarios:
+        return False
+    if workers and (record.get("workers") or "").strip() not in workers:
+        return False
+    if mixes and (record.get("request_mix") or "").strip() not in mixes:
+        return False
+    if reps and (record.get("rep") or "").strip() not in reps:
+        return False
+    if run_ids and run_id not in run_ids:
+        return False
+    return True
+
+
+def _sys_meta_row(rows: list):
+    for row in rows:
+        if (row.get("run_id") or "").strip():
+            return row
+    return None
+
+
+def filter_experiments(experiments: list, scenario: str = "", workers: str = "",
+                       request_mix: str = "", rep: str = "", run_id: str = "",
+                       exclude_legacy: bool = False) -> list:
+    """
+    Filtra experimentos pelos metadados gravados no CSV.
+
+    CSVs legacy (sem run_id) só entram quando nenhum filtro é pedido e
+    --exclude-legacy não foi usado. Ao comparar workers/mix/reps, os dados
+    antigos não contaminam a figura.
+    """
+    scenarios = _split_filter(scenario)
+    worker_set = _split_filter(workers)
+    mixes = _split_filter(request_mix)
+    reps = _split_filter(rep)
+    run_ids = _split_filter(run_id)
+    any_filter = bool(scenarios or worker_set or mixes or reps or run_ids)
+
+    selected = []
+    for exp in experiments:
+        if not _exp_value(exp, "run_id"):
+            if not exclude_legacy and not any_filter:
+                selected.append(exp)
+            continue
+        if _meta_matches(exp, scenarios, worker_set, mixes, reps, run_ids):
+            selected.append(exp)
+    return selected
+
+
+def filter_sys_data(sys_data: dict, scenario: str = "", workers: str = "",
+                    request_mix: str = "", rep: str = "", run_id: str = "",
+                    exclude_legacy: bool = False) -> dict:
+    """Filtra os CSVs de sistema com os mesmos critérios dos experimentos."""
+    scenarios = _split_filter(scenario)
+    worker_set = _split_filter(workers)
+    mixes = _split_filter(request_mix)
+    reps = _split_filter(rep)
+    run_ids = _split_filter(run_id)
+    any_filter = bool(scenarios or worker_set or mixes or reps or run_ids)
+
+    if not any_filter and not exclude_legacy:
+        return sys_data
+
+    selected = {}
+    for path, rows in sys_data.items():
+        meta = _sys_meta_row(rows)
+        if meta is None:
+            continue
+        if _meta_matches(meta, scenarios, worker_set, mixes, reps, run_ids):
+            selected[path] = rows
+    return selected
+
+
+def describe_filters(args) -> str:
+    parts = []
+    if args.scenario:
+        parts.append(f"scenario={args.scenario}")
+    if args.workers:
+        parts.append(f"workers={args.workers}")
+    if args.request_mix:
+        parts.append(f"request_mix={args.request_mix}")
+    if args.rep:
+        parts.append(f"rep={args.rep}")
+    if args.run_id:
+        parts.append(f"run_id={args.run_id}")
+    if args.exclude_legacy:
+        parts.append("exclude_legacy")
+    return ", ".join(parts) if parts else "nenhum"
+
+
+def list_runs(experiments: list):
+    """Imprime run_ids e metadados para o usuário montar os filtros."""
+    print("run_id\tscenario\tworkers\trequest_mix\trep\tvus\tarquivo")
+    for exp in sorted(experiments, key=lambda e: e.get("_source_file", "")):
+        run_id = _exp_value(exp, "run_id") or "(legacy)"
+        print(
+            "\t".join([
+                run_id,
+                _exp_value(exp, "scenario") or "-",
+                _exp_value(exp, "workers") or "-",
+                _exp_value(exp, "request_mix") or "-",
+                _exp_value(exp, "rep") or "-",
+                _exp_value(exp, "vus") or _exp_value(exp, "vus_max") or "-",
+                exp.get("_source_file", ""),
+            ])
+        )
 
 
 def float_or_none(v):
@@ -823,7 +956,42 @@ def main():
 
     experiments, sys_data = load_all_experiments(args.results_dir)
 
+    if args.list_runs:
+        list_runs(experiments)
+        return
+
+    experiments = filter_experiments(
+        experiments,
+        scenario=args.scenario,
+        workers=args.workers,
+        request_mix=args.request_mix,
+        rep=args.rep,
+        run_id=args.run_id,
+        exclude_legacy=args.exclude_legacy,
+    )
+    sys_data = filter_sys_data(
+        sys_data,
+        scenario=args.scenario,
+        workers=args.workers,
+        request_mix=args.request_mix,
+        rep=args.rep,
+        run_id=args.run_id,
+        exclude_legacy=args.exclude_legacy,
+    )
+
+    if describe_filters(args) != "nenhum":
+        print(
+            f"[plots] Filtros: {describe_filters(args)} | "
+            f"{len(experiments)} experimento(s), {len(sys_data)} sistema(s)."
+        )
+
     if not experiments and not sys_data:
+        if describe_filters(args) != "nenhum":
+            print(
+                f"[plots] Nenhum dado corresponde aos filtros "
+                f"({describe_filters(args)}) em '{args.results_dir}'."
+            )
+            sys.exit(0)
         print(
             f"[plots] Nenhum dado encontrado em '{args.results_dir}'.\n"
             "        Execute primeiro os experimentos com:\n"
