@@ -58,6 +58,7 @@ cpu-bound/
 │   ├── deploy_vm.sh             # Deploy + systemd na VM Ubuntu
 │   └── run_vm_experiments.sh    # Carga externa (k6) + coleta interna via SSH
 ├── run_local_sweep.sh           # Varredura local de níveis de demanda
+├── tests/                       # Testes de fumaça da API (pytest)
 └── requirements.txt
 ```
 
@@ -90,8 +91,12 @@ pip install -r requirements.txt
 
 ### 3.2. Iniciar a aplicação
 
-- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
-- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
+- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
+
+> Ajuste `--workers` ao número de núcleos da máquina. Os scripts de varredura já
+> usam `WORKERS=$(nproc)` por padrão (um worker por núcleo); use `WORKERS=1` apenas
+> para uma linha de base explícita de um único processo.
 
 ### 3.3. Teste rápido
 
@@ -104,9 +109,15 @@ curl "http://127.0.0.1:8000/process-image?intensity=1000&chunk_kib=64"
 
 ```bash
 ./run_local_sweep.sh
-# personalizando:
-INTENSITY=2000 CHUNK_KIB=64 VUS_LEVELS="1 2 4 8" DURATION=20 ./run_local_sweep.sh
+# personalizando (multi-worker + mix de GET/POST):
+INTENSITY=2000 CHUNK_KIB=64 VUS_LEVELS="1 2 4 8" DURATION=20 \
+  WORKERS=8 REQUEST_MIX=mixed SCENARIO=LOCAL REP=1 ./run_local_sweep.sh
 ```
+
+Cada nível recebe um `run_id` único no formato
+`<perfil>_<cenário>_w<workers>_<mix>_<vus>vus_r<rep>_<UTC>`, gravado tanto no
+CSV do experimento quanto no CSV do monitor — é o elo de join usado pelos
+gráficos e pelo validador.
 
 ### 3.5. Execução via Docker / Docker Compose
 
@@ -150,8 +161,13 @@ k6 run k6/load-test.js
 k6 run k6/load-test.js -e BASE_URL=http://192.168.56.10:8000 -e INTENSITY=4000
 ```
 
-Parâmetros: `BASE_URL`, `INTENSITY`, `CHUNK_KIB`, `OUT_DIR`. Ao final, o k6 grava
-`data/results/k6_cpu_*.csv`, consumido por `generate_plots.py`.
+Parâmetros: `BASE_URL`, `INTENSITY`, `CHUNK_KIB`, `OUT_DIR`, `VUS`, `DURATION`,
+`REQUEST_MIX`, `RUN_ID`, `SCENARIO`, `VCPUS`, `RAM_GIB`, `WORKERS`, `REP`. Ao final,
+o k6 grava `data/results/k6_cpu_*.csv`, consumido por `generate_plots.py`.
+
+`REQUEST_MIX=uniform` (padrão) envia apenas `GET`; `REQUEST_MIX=mixed` alterna
+`GET`/`POST` no mesmo endpoint, exercitando os dois caminhos da API. O resumo
+inclui o `run_id` e os metadados de cenário para o join com o monitor.
 
 ---
 
@@ -160,6 +176,7 @@ Parâmetros: `BASE_URL`, `INTENSITY`, `CHUNK_KIB`, `OUT_DIR`. Ao final, o k6 gra
 Coleta contínua com agendamento monotônico (`perf_counter`), sem acúmulo de atraso.
 Métricas registradas:
 
+- `run_id`, `profile`, `scenario`, `vcpus`, `ram_gib`, `workers`, `request_mix`, `rep`
 - `elapsed_s`, `timestamp_utc`
 - `cpu_percent_total`, `cpu_core_X_percent`
 - `mem_total_mib`, `mem_used_mib`, `mem_available_mib`, `mem_percent`
@@ -192,15 +209,14 @@ Uso:
 
 ## 6. Gráficos (`plots/generate_plots.py`)
 
-Gera, a partir das medições reais em `data/results/`:
+Gera, a partir das medições reais em `data/results/`, apenas duas figuras
+agrupadas (menos arquivos, eixos fixos no máximo global de cada métrica):
 
-1. `latency_vs_demand.png` — Demanda × Latência (avg/p90/p95)
-2. `rps_vs_demand.png` — Demanda × Vazão (RPS)
-3. `cpu_over_time.png` — CPU em **núcleos equivalentes** (processo + sistema)
-4. `memory_over_time.png` — RSS do processo (MiB) + memória do sistema (%)
-5. `proc_resources_over_time.png` — CPU% e RSS do processo alvo
-6. `disk_io_over_time.png` — Leitura/escrita de disco (MiB/s)
-7. `demand_vs_resources.png` — Demanda × CPU (núcleos) / Memória (RSS MiB) / Disco
+1. `overview_demand.png` — Demanda × latência (média/p90/p95), vazão, CPU
+   (núcleos equivalentes), memória (RSS/%), I/O de disco e eficiência (req/s
+   por núcleo).
+2. `overview_time.png` — CPU/memória do sistema e CPU/RSS do processo ao longo
+   do tempo, com eixos fixos para comparar execuções.
 
 ```bash
 .venv/bin/python plots/generate_plots.py --results-dir data/results --out-dir plots/output
@@ -239,3 +255,19 @@ ativo escasso é o tempo de CPU do único núcleo — ideal para demonstrar satu
 
 A carga é gerada **de fora da VM** (k6) e as métricas de infraestrutura são
 coletadas **dentro** da VM via SSH, conforme exigido pela atividade.
+
+O script deriva `VCPUS`/`RAM_GIB` do nome do cenário (ex.: `C2_2vcpu_1gib`) e usa
+`WORKERS=VCPUS` por padrão — ou seja, um worker uvicorn por vCPU. Para uma linha
+de base explícita de processo único, rode com `WORKERS=1`.
+
+---
+
+## 8. Validação dos Resultados
+
+```bash
+python3 tools/validate_results.py src/cpu-bound/data/results
+```
+
+O validador verifica se cada experimento novo tem `run_id`, se não há `run_id`
+duplicado e se existe exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs
+antigos sem `run_id` são tratados como *legacy* e apenas avisados.
