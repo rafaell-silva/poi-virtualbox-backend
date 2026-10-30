@@ -21,6 +21,9 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from system_monitor import ProcessTreeMonitor
+
 # Campos de metadados repetidos em cada linha do CSV (join com k6/exp).
 META_FIELDS = [
     "run_id",
@@ -47,6 +50,24 @@ def parse_args():
     p.add_argument("--start-server", action="store_true", help="Iniciar servidor uvicorn automaticamente.")
     p.add_argument("--workers", type=int, default=1, help="Número de workers uvicorn (default: 1 para baseline de 1 vCPU).")
     p.add_argument(
+        "--target-pid",
+        type=int,
+        default=None,
+        help=(
+            "PID do servidor da aplicação. Habilita proc_rss_mib/proc_cpu_percent "
+            "no CSV por nível de demanda — sem isso o generate_plots cai no fallback "
+            "de métricas sistêmicas agregadas e o perfil da aplicação fica invisível."
+        ),
+    )
+    p.add_argument(
+        "--include-children",
+        action="store_true",
+        help=(
+            "Soma RSS/CPU dos descendentes de --target-pid. Obrigatório com "
+            "uvicorn --workers N > 1, pois o PID principal é só o supervisor."
+        ),
+    )
+    p.add_argument(
         "--run-id",
         default="",
         help=(
@@ -70,10 +91,11 @@ def parse_args():
 class SystemMetricsCollector:
     """Coletor interno de métricas com agendamento monotônico sem acúmulo de atraso."""
     def __init__(self, interval: float, out_path: str, target_pid: int = None,
-                 meta: dict = None):
+                 include_children: bool = False, meta: dict = None):
         self.interval = max(0.1, interval)
         self.out_path = out_path
         self.target_pid = target_pid
+        self.include_children = include_children
         self.meta = meta or {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -92,8 +114,7 @@ class SystemMetricsCollector:
         proc = None
         if self.target_pid:
             try:
-                proc = psutil.Process(self.target_pid)
-                proc.cpu_percent(interval=None)
+                proc = ProcessTreeMonitor(self.target_pid, self.include_children)
             except Exception:
                 proc = None
 
@@ -110,7 +131,7 @@ class SystemMetricsCollector:
             "disk_read_iops", "disk_write_iops",
         ]
         if proc:
-            fieldnames += ["proc_rss_mib"]
+            fieldnames += ["proc_rss_mib", "proc_cpu_percent"]
 
         try:
             prev_dio = psutil.disk_io_counters()
@@ -182,11 +203,14 @@ class SystemMetricsCollector:
                     "disk_write_iops": disk_write_iops,
                 })
                 if proc:
+                    if sample_index % 5 == 0:
+                        proc.refresh()
                     try:
-                        row["proc_rss_mib"] = round(proc.memory_info().rss / (1024 ** 2), 2)
+                        row["proc_rss_mib"] = round(proc.rss_mib(), 2)
+                        row["proc_cpu_percent"] = round(proc.cpu_percent(), 2)
                     except Exception:
                         row["proc_rss_mib"] = ""
-                        proc = None
+                        row["proc_cpu_percent"] = ""
 
                 writer.writerow(row)
                 f.flush()
@@ -388,13 +412,27 @@ def main():
             sys.exit(1)
         print("OK")
 
+    if server_proc is not None:
+        target_pid = server_proc.pid
+        include_children = True  # uvicorn --workers N cria filhos worker
+    else:
+        target_pid = args.target_pid
+        include_children = args.include_children
+
     sys_csv = os.path.join(args.out_dir, f"sys_local_{effective_label}_{ts_str}.csv")
     monitor = SystemMetricsCollector(
         interval=1.0,
         out_path=sys_csv,
-        target_pid=server_proc.pid if server_proc else None,
+        target_pid=target_pid,
+        include_children=include_children,
         meta=meta,
     )
+    if target_pid is None:
+        print(
+            "[exp][aviso] --target-pid não informado e servidor não iniciado aqui.\n"
+            "             O CSV de métricas NÃO terá proc_rss_mib/proc_cpu_percent,\n"
+            "             e os gráficos de recursos vs. demanda ficarão planos."
+        )
     monitor.start()
 
     print(

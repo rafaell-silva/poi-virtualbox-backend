@@ -13,7 +13,7 @@ set -euo pipefail
 
 SIZE_MIB="${SIZE_MIB:-${SIZE_MB:-8}}"
 ITERATIONS="${ITERATIONS:-1}"
-WORKERS="${WORKERS:-1}" # 1 worker como baseline para VM de 1 vCPU
+WORKERS="${WORKERS:-$(nproc 2>/dev/null || echo 1)}" # usa todos os núcleos por padrão (multi-worker)
 PROFILE="${PROFILE:-io}"
 SCENARIO="${SCENARIO:-LOCAL}"
 VCPUS="${VCPUS:-$(nproc 2>/dev/null || echo 0)}"
@@ -156,6 +156,8 @@ for VUS in "${VUS_LEVELS[@]}"; do
         --iterations "${ITERATIONS}" \
         --vus "${VUS}" \
         --duration "${DURATION}" \
+        --target-pid "${SERVER_PID}" \
+        --include-children \
         --label "${LABEL}" \
         --run-id "${RUN_ID}" \
         --profile "${PROFILE}" \

@@ -31,7 +31,7 @@ set -euo pipefail
 SIZE_MIB="${SIZE_MIB:-${SIZE_MB:-8}}"
 ITERATIONS="${ITERATIONS:-1}"
 DWELL_MS="${DWELL_MS:-200}" # tempo de retenção do buffer (memory-bound)
-WORKERS="${WORKERS:-1}" # 1 worker como baseline para VM de 1 vCPU
+WORKERS="${WORKERS:-$(nproc 2>/dev/null || echo 1)}" # usa todos os núcleos por padrão (multi-worker)
 PROFILE="${PROFILE:-memory}"
 SCENARIO="${SCENARIO:-LOCAL}"
 VCPUS="${VCPUS:-$(nproc 2>/dev/null || echo 0)}"

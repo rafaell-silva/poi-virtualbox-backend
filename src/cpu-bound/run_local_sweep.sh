@@ -22,7 +22,7 @@ set -euo pipefail
 
 INTENSITY="${INTENSITY:-$(( ${ITERATIONS:-1} * 1000 ))}" # iterações de hash por requisição
 CHUNK_KIB="${CHUNK_KIB:-64}" # bloco hasheado (>=2 KiB libera o GIL)
-WORKERS="${WORKERS:-1}" # 1 worker como baseline para VM de 1 vCPU
+WORKERS="${WORKERS:-$(nproc 2>/dev/null || echo 1)}" # usa todos os núcleos por padrão (multi-worker)
 PROFILE="${PROFILE:-cpu}"
 SCENARIO="${SCENARIO:-LOCAL}"
 VCPUS="${VCPUS:-$(nproc 2>/dev/null || echo 0)}"

@@ -45,9 +45,13 @@ mkdir -p "${OUT_DIR}"
 
 SCENARIO="${SCENARIO:-C1_1vcpu_1gib}"
 PROFILE="${PROFILE:-io}"
-WORKERS="${WORKERS:-1}"
+# Deriva vCPUs/RAM do nome do cenário (ex.: C2_2vcpu_2gib) quando não informados.
+VCPUS="${VCPUS:-$(sed -n 's/.*_\([0-9]\+\)vcpu.*/\1/p' <<<"${SCENARIO}")}"
 VCPUS="${VCPUS:-1}"
+RAM_GIB="${RAM_GIB:-$(sed -n 's/.*_\([0-9]\+\)gib.*/\1/p' <<<"${SCENARIO}")}"
 RAM_GIB="${RAM_GIB:-1}"
+# Multi-worker: por padrão, um worker por vCPU do cenário.
+WORKERS="${WORKERS:-${VCPUS}}"
 REQUEST_MIX="${REQUEST_MIX:-uniform}"
 REP="${REP:-1}"
 SIZE_MIB="${SIZE_MIB:-8}"
