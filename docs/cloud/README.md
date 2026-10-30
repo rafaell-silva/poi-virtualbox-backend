@@ -631,6 +631,9 @@ openstack volume snapshot create \
   --name "${PREFIX}-data-snapshot"
 ```
 
+Se o Cinder recusar o snapshot de um volume em uso, pare a VM antes ou use
+`--force` (verifique a política do projeto/professor).
+
 Verifique:
 
 ```bash
