@@ -274,6 +274,9 @@ tratados como *legacy* (apenas aviso).
 
 ---
 
+> Para a matriz **workers × request_mix × repetições** e os filtros de
+> gráficos, veja [`docs/metodologia/README.md`](../../docs/metodologia/README.md).
+
 ## 10. Nuvem (OpenStack/LSD)
 
 O roteiro manual completo está em

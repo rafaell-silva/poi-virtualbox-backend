@@ -274,6 +274,9 @@ antigos sem `run_id` são tratados como *legacy* e apenas avisados.
 
 ---
 
+> Para a matriz **workers × request_mix × repetições** e os filtros de
+> gráficos, veja [`docs/metodologia/README.md`](../../docs/metodologia/README.md).
+
 ## 9. Nuvem (OpenStack/LSD)
 
 O roteiro manual completo está em

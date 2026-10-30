@@ -160,6 +160,31 @@ O validador confere se cada experimento novo tem `run_id`, se ele é único e se
 existe um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
 tratados como *legacy* e não quebram a validação.
 
+## Metodologia dos Experimentos
+
+As convenções para comparar **1 × N workers**, **uniform × mixed** e
+**repetições** estão em [`docs/metodologia/README.md`](docs/metodologia/README.md).
+A planilha de acompanhamento (ainda sem dados novos) está em
+[`docs/metodologia/matriz.csv`](docs/metodologia/matriz.csv).
+
+O gerador de gráficos aceita filtros por metadados:
+
+```bash
+# listar run_ids e configurações disponíveis
+python plots/generate_plots.py --results-dir data/results --list-runs
+
+# ignorar CSVs legacy e comparar uma configuração por diretório
+python plots/generate_plots.py --exclude-legacy --workers 1 --out-dir plots/output/w1
+python plots/generate_plots.py --exclude-legacy --workers 8 --out-dir plots/output/w8
+
+# comparar GET puro com GET/POST
+python plots/generate_plots.py --exclude-legacy --request-mix uniform --out-dir plots/output/uniform
+python plots/generate_plots.py --exclude-legacy --request-mix mixed   --out-dir plots/output/mixed
+```
+
+Os PNGs versionados continuam sendo medições *legacy*; eles serão regenerados
+quando houver execuções novas.
+
 ## Deploy em Nuvem (OpenStack/LSD)
 
 O roteiro completo, com comandos manuais e prints para o relatório, está em
