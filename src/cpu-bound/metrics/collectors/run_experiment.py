@@ -12,6 +12,7 @@ import csv
 import datetime
 import json
 import os
+import random
 import shutil
 import signal
 import socket
@@ -275,10 +276,13 @@ class SystemMetricsCollector:
                 self.samples += 1
 
 
-def make_request(url: str) -> dict:
+def make_request(url: str, method: str = "GET") -> dict:
     t0 = time.perf_counter()
+    data = b"" if method == "POST" else None
     req = urllib.request.Request(
         url,
+        data=data,
+        method=method,
         headers={"Accept": "application/json", "Cache-Control": "no-cache"},
     )
     try:
@@ -316,14 +320,16 @@ def make_request(url: str) -> dict:
         }
 
 
-def run_load(url: str, vus: int, duration: int) -> list:
+def run_load(url: str, vus: int, duration: int, request_mix: str = "uniform") -> list:
     results = []
     lock = threading.Lock()
     stop_event = threading.Event()
 
     def worker():
         while not stop_event.is_set():
-            r = make_request(url)
+            # REQUEST_MIX=mixed alterna GET/POST no mesmo endpoint de workload.
+            method = "POST" if request_mix == "mixed" and random.random() < 0.5 else "GET"
+            r = make_request(url, method)
             with lock:
                 results.append(r)
             time.sleep(0.05)  # ritmo controlado
@@ -636,7 +642,7 @@ def main():
             "REP": args.rep,
         })
     else:
-        results = run_load(workload_url, args.vus, args.duration)
+        results = run_load(workload_url, args.vus, args.duration, args.request_mix)
         summary = summarize(results)
         summary["measured_rps"] = (
             round(summary["total_requests"] / (time.perf_counter() - t0), 2)

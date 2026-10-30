@@ -33,6 +33,24 @@ const VCPUS = __ENV.VCPUS || "";
 const RAM_GIB = __ENV.RAM_GIB || "";
 const WORKERS = __ENV.WORKERS || "";
 const REQUEST_MIX = __ENV.REQUEST_MIX || __ENV.MIX || "uniform";
+
+// Parâmetros comuns das requisições de carga.
+const REQUEST_PARAMS = {
+  timeout: "30s",
+  headers: { "Accept": "application/json", "Cache-Control": "no-cache" },
+};
+
+// REQUEST_MIX=uniform mantém só GET (baseline). REQUEST_MIX=mixed alterna
+// GET/POST no mesmo endpoint de workload para variar o tipo de requisição.
+function workloadRequest() {
+  if (REQUEST_MIX === "mixed") {
+    return Math.random() < 0.5
+      ? http.get(WORKLOAD_URL, REQUEST_PARAMS)
+      : http.post(WORKLOAD_URL, null, REQUEST_PARAMS);
+  }
+  return http.get(WORKLOAD_URL, REQUEST_PARAMS);
+}
+
 const REP = __ENV.REP || "";
 
 
@@ -78,10 +96,7 @@ function buildOptions() {
 export const options = buildOptions();
 
 export default function () {
-  const res = http.get(WORKLOAD_URL, {
-    timeout: '30s',
-    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' },
-  });
+  const res = workloadRequest();
 
   check(res, {
     'status 200': (r) => r.status === 200,

@@ -45,6 +45,14 @@ def test_process_writes_and_reads_expected_bytes():
     assert body["timing"]["app_total_ms"] >= 0
 
 
+def test_process_post():
+    response = client.post(
+        "/process", params={"size_mb": 1, "iterations": 1, "chunk_kb": 64}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
 def test_process_without_fsync():
     response = client.get(
         "/process",

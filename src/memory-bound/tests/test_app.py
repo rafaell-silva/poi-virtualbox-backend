@@ -46,6 +46,14 @@ def test_workload_small_buffer():
     assert "memory_snapshots" in body
 
 
+def test_workload_post():
+    response = client.post(
+        "/workload", params={"size_mib": 1, "iterations": 1, "dwell_ms": 0}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
 def test_workload_size_mb_alias():
     response = client.get(
         "/workload", params={"size_mb": 1, "iterations": 1, "dwell_ms": 0}
