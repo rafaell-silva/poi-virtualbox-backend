@@ -84,7 +84,7 @@ def read_sys_csv(path: str) -> list[dict]:
 def load_all_experiments(results_dir: str):
     """
     Carrega todos os arquivos de experimento (exp_*.csv e k6_*.csv) e
-    sys_*.csv correlacionados pelo label/timestamp.
+    sys_*.csv correlacionados pelo run_id (label/timestamp só para CSVs legacy).
     """
     exp_files = sorted(glob.glob(os.path.join(results_dir, "exp_*.csv")))
     k6_files = sorted(glob.glob(os.path.join(results_dir, "k6_*.csv")))
@@ -129,24 +129,72 @@ def parse_iso_ts(v):
         return None
 
 
-def classify_sys_files(experiments: list, sys_series: dict):
+def _experiment_run_id(exp: dict):
+    """run_id do experimento; None em CSVs legacy (anteriores ao run_id)."""
+    value = (exp.get("run_id") or "").strip()
+    return value or None
+
+
+def _sys_file_run_id(rows: list):
+    """run_id declarado em um CSV de sistema (primeira linha que o tiver)."""
+    for row in rows:
+        value = (row.get("run_id") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def build_sys_run_index(sys_data: dict):
+    """
+    Indexa run_id → arquivo sys_* para join exato com o experimento.
+
+    Esse é o caminho preferencial: o run_id é gerado uma única vez pelo
+    orquestrador e gravado tanto no resumo (exp_*/k6_*) quanto no CSV de
+    sistema. CSVs legacy (sem a coluna run_id) ficam fora do índice e
+    continuam usando a heurística antiga de nome/timestamp/VUs.
+    """
+    index = {}
+    for path, rows in sys_data.items():
+        run_id = _sys_file_run_id(rows)
+        if not run_id:
+            continue
+        current = index.get(run_id)
+        if current is None or len(rows) > len(sys_data[current]):
+            if current is not None:
+                print(
+                    f"[plots][aviso] run_id '{run_id}' repetido em sys_*; "
+                    f"usando {os.path.basename(path)}"
+                )
+            index[run_id] = path
+    return index
+
+
+def classify_sys_files(experiments: list, sys_series: dict, sys_data: dict = None):
     """
     Separa os arquivos sys_* em:
       - level_files: correspondem a um experimento (rodada por nível de demanda);
       - monitor_files: coletas contínuas (sem experimento associado).
 
-    A correspondência usa o mesmo critério de _match_sys_file: o nome-base do
-    experimento (sem prefixo exp_/k6_) deve estar contido no nome do arquivo sys_.
+    Com run_id disponível, a classificação é exata. Para CSVs legacy, cai na
+    heurística antiga: o nome-base do experimento (sem prefixo exp_/k6_) deve
+    estar contido no nome do arquivo sys_.
     """
-    cores = set()
+    level_run_ids = {rid for e in experiments if (rid := _experiment_run_id(e))}
+    legacy_cores = set()
     for e in experiments:
         src = e.get("_source_file", "")
         if src:
-            cores.add(Path(src).stem.replace("exp_", "").replace("k6_", ""))
+            legacy_cores.add(Path(src).stem.replace("exp_", "").replace("k6_", ""))
+
     level_files, monitor_files = [], []
     for p in sys_series:
-        stem = Path(p).stem
-        (level_files if any(c and c in stem for c in cores) else monitor_files).append(p)
+        run_id = _sys_file_run_id(sys_data.get(p, [])) if sys_data else None
+        if run_id:
+            is_level = run_id in level_run_ids
+        else:
+            stem = Path(p).stem
+            is_level = any(c and c in stem for c in legacy_cores)
+        (level_files if is_level else monitor_files).append(p)
     return level_files, monitor_files
 
 
@@ -187,13 +235,19 @@ def combine_on_timeline(sys_series: dict, key: str):
     return xs, ys
 
 
-def _match_sys_file(exp: dict, sys_data: dict):
+def _match_sys_file(exp: dict, sys_data: dict, sys_run_index: dict = None):
     """
     Encontra o arquivo sys_* correspondente ao experimento exp_*/k6_*.
-    Tenta primeiro correspondência por substring de nome/timestamp;
-    como fallback, casa pela quantidade de VUs (ex.: _1vus_, _2vus_, etc.)
-    quando há 1 arquivo sys para aquele nível de VUs.
+
+    Caminho preferencial: match exato pelo run_id (gerado pelo orquestrador e
+    presente nos dois CSVs). Fallbacks para dados legacy: substring de
+    nome/timestamp e, por último, quantidade de VUs.
     """
+    if sys_run_index:
+        run_id = _experiment_run_id(exp)
+        if run_id and run_id in sys_run_index:
+            return sys_run_index[run_id]
+
     label = exp.get("_source_file", "")
     if not label:
         return None
@@ -662,7 +716,7 @@ def plot_disk(sys_series: dict, out_dir: str, show: bool):
     plt.close(fig)
 
 
-def _demand_resource_points(experiments: list, sys_data: dict):
+def _demand_resource_points(experiments: list, sys_data: dict, sys_run_index: dict = None):
     """
     Correlaciona cada experimento com o arquivo sys_* correspondente e extrai
     as médias de CPU (em núcleos equivalentes) e de memória (RSS do processo
@@ -676,7 +730,7 @@ def _demand_resource_points(experiments: list, sys_data: dict):
         demand = float_or_none(e.get("vus") or e.get("vus_max"))
         if demand is None:
             continue
-        matched = _match_sys_file(e, sys_data)
+        matched = _match_sys_file(e, sys_data, sys_run_index)
         if not matched:
             continue
         rows = sys_data[matched]
@@ -697,7 +751,8 @@ def _demand_resource_points(experiments: list, sys_data: dict):
     return sorted(points, key=lambda p: p["demand"]), ncores
 
 
-def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, show: bool):
+def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, show: bool,
+                             sys_run_index: dict = None):
     """
     Gera painéis Demanda × CPU (núcleos), Demanda × Memória (RSS do processo)
     e, quando disponível, Demanda × I/O de disco.
@@ -705,7 +760,7 @@ def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, sh
     """
     import matplotlib.pyplot as plt
 
-    points, ncores = _demand_resource_points(experiments, sys_data)
+    points, ncores = _demand_resource_points(experiments, sys_data, sys_run_index)
     if len(points) < 2:
         print("[plots] Dados insuficientes para gráfico Demanda×Recursos (precisa ≥2 experimentos).")
         return
@@ -827,7 +882,9 @@ def main():
     # Para os gráficos "ao longo do tempo", dá-se preferência aos arquivos por
     # nível de demanda (correlacionados a um experimento). Se não houver, usa-se
     # tudo. As amostras são unidas no tempo real de coleta (ver combine_on_timeline).
-    level_paths, monitor_paths = classify_sys_files(experiments, sys_series)
+    # Índice run_id -> sys_* para join exato (legacy cai na heurística antiga).
+    sys_run_index = build_sys_run_index(sys_data)
+    level_paths, monitor_paths = classify_sys_files(experiments, sys_series, sys_data)
     res_paths = level_paths if level_paths else list(sys_series)
     proc_paths = monitor_paths if monitor_paths else list(sys_series)
     res_series = {p: sys_series[p] for p in res_paths}
@@ -860,7 +917,7 @@ def main():
     plot_memory_over_time(time_series, args.out_dir, args.show)
     plot_proc_resources(proc_series, args.out_dir, args.show)
     plot_disk(res_series, args.out_dir, args.show)
-    plot_demand_vs_resources(experiments, sys_data, args.out_dir, args.show)
+    plot_demand_vs_resources(experiments, sys_data, args.out_dir, args.show, sys_run_index)
 
     print(f"\n[plots] Concluído. Arquivos em '{args.out_dir}/'.")
 
