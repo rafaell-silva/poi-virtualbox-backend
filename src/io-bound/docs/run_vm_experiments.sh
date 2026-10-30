@@ -26,7 +26,15 @@ VM_IP="${VM_IP:-127.0.0.1}"
 VM_USER="${VM_USER:-osboxes}"
 VM_PORT="${VM_PORT:-2222}"
 APP_PORT="${APP_PORT:-8000}"
-TARGET_URL="http://${VM_IP}:${APP_PORT}"
+
+# Acesso separado para SSH e HTTP: no VirtualBox ambos usam VM_IP; na nuvem o
+# SSH e o HTTP passam pelo balanceador (VIP/portas podem ser diferentes).
+SSH_HOST="${SSH_HOST:-${VM_IP}}"
+SSH_PORT="${SSH_PORT:-${VM_PORT}}"
+TARGET_URL="${TARGET_URL:-http://${VM_IP}:${APP_PORT}}"
+REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/poi-io}"
+REMOTE_PYTHON="${REMOTE_PYTHON:-${REMOTE_APP_DIR}/.venv/bin/python}"
+REMOTE_RESULTS_DIR="${REMOTE_RESULTS_DIR:-/tmp}"
 
 # Detecta k6 no PATH ou no local padrão do Windows
 if command -v k6 >/dev/null 2>&1; then
@@ -54,6 +62,7 @@ RAM_GIB="${RAM_GIB:-1}"
 WORKERS="${WORKERS:-${VCPUS}}"
 REQUEST_MIX="${REQUEST_MIX:-uniform}"
 REP="${REP:-1}"
+SERVICE="${SERVICE:-poi-io}"
 SIZE_MIB="${SIZE_MIB:-8}"
 ITERATIONS="${ITERATIONS:-1}"
 DURATION="${DURATION:-45s}"
@@ -83,19 +92,21 @@ for VUS in "${VUS_LEVELS[@]}"; do
     RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_${VUS}vus_r${REP}_${TS}"
 
     # 0. Descobre o PID da aplicação na VM (métricas de processo: CPU e RSS)
-    APP_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
-        "systemctl show -p MainPID --value ${SERVICE:-poi-io}" 2>/dev/null || echo "")
+    APP_PID=$(ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" \
+        "systemctl show -p MainPID --value ${SERVICE}" 2>/dev/null || echo "")
+
+    ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_RESULTS_DIR}"
 
     # 1. Inicia o monitor de recursos DENTRO da VM via SSH
     echo "  [SSH] Iniciando system_monitor.py na VM (target-pid=${APP_PID:-n/a})..."
-    VM_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
-        "nohup /opt/poi-io/.venv/bin/python /opt/poi-io/metrics/collectors/system_monitor.py \
+    VM_PID=$(ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" \
+        "nohup ${REMOTE_PYTHON} ${REMOTE_APP_DIR}/metrics/collectors/system_monitor.py \
             --label ${RUN_ID} --run-id ${RUN_ID} --profile ${PROFILE} \
             --scenario ${SCENARIO} --vcpus ${VCPUS} --ram-gib ${RAM_GIB} \
             --workers ${WORKERS} --request-mix ${REQUEST_MIX} --rep ${REP} \
             --duration 180 --interval 1.0 --machine vm \
             ${APP_PID:+--target-pid ${APP_PID} --include-children} \
-            --out-dir /tmp > /tmp/monitor_${RUN_ID}.log 2>&1 &
+            --out-dir ${REMOTE_RESULTS_DIR} > ${REMOTE_RESULTS_DIR}/monitor_${RUN_ID}.log 2>&1 &
         echo \$!")
     echo "        PID do monitor na VM: ${VM_PID}"
     sleep 2
@@ -119,16 +130,16 @@ for VUS in "${VUS_LEVELS[@]}"; do
 
     # 3. Encerra o monitor na VM e recupera o CSV de métricas reais
     echo "  [SSH] Encerrando monitor na VM e transferindo CSV..."
-    ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" "kill ${VM_PID} 2>/dev/null || true" || true
+    ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" "kill ${VM_PID} 2>/dev/null || true" || true
     sleep 1
 
-    REMOTE_CSV=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
-        "ls /tmp/sys_vm_${RUN_ID}_*.csv 2>/dev/null | head -1" || echo "")
+    REMOTE_CSV=$(ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" \
+        "ls ${REMOTE_RESULTS_DIR}/sys_vm_${RUN_ID}_*.csv 2>/dev/null | head -1" || echo "")
     if [ -n "${REMOTE_CSV}" ]; then
-        scp -P "${VM_PORT}" "${VM_USER}@${VM_IP}:${REMOTE_CSV}" \
+        scp -P "${SSH_PORT}" "${VM_USER}@${SSH_HOST}:${REMOTE_CSV}" \
             "${OUT_DIR}/sys_vm_${RUN_ID}.csv"
         echo "        OK: CSV de infraestrutura da VM salvo."
-        ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" "rm -f ${REMOTE_CSV}" || true
+        ssh -p "${SSH_PORT}" "${VM_USER}@${SSH_HOST}" "rm -f ${REMOTE_CSV}" || true
     else
         echo "        [aviso] CSV de métricas da VM não localizado em /tmp remoto."
     fi
