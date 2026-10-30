@@ -237,6 +237,20 @@ openstack loadbalancer pool list
 openstack loadbalancer member list <POOL>
 ```
 
+Se o LB ainda não existir no seu projeto (o enunciado diz que ele é fornecido,
+mas confirme), crie-o na sub-rede da VM:
+
+```bash
+openstack loadbalancer create \
+  --name "$LB_NAME" \
+  --vip-subnet-id "<SUBNET_ID_DA_VM>" \
+  --wait
+```
+
+> **O que está acontecendo:** o LB (Octavia) recebe um VIP na sub-rede
+> indicada. Os listeners e pools são criados depois, um para SSH (TCP) e outro
+> para HTTP.
+
 ### 6.1 Se o LB ainda não tem listener TCP para SSH
 
 ```bash
