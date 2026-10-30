@@ -8,3 +8,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Credenciais e chaves de nuvem (OpenStack)
+openrc
+*openrc
+clouds.yaml
+*.pem
+*.key
+docs/cloud/evidence/
