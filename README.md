@@ -73,6 +73,19 @@ monitor, permitindo o join exato entre demanda e recursos.
 
 Requisitos: Python 3.12, [k6](https://k6.io/) instalado no host.
 
+### Testes automatizados
+
+Com o `.venv` do projeto ativo (que já tem `fastapi`/`psutil`), instale as
+dependências de teste e rode o pytest a partir da raiz do repositório:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Os testes cobrem os três backends (fumaça da API) e o join/validação por
+`run_id` nos CSVs.
+
 ## Experimentos na VM (VirtualBox)
 
 O experimento segue a metodologia onde **a aplicação e o monitoramento de infraestrutura rodam na VM**, enquanto **a geração de carga (k6) ocorre externamente a partir da máquina física (host ou LCC)**.
