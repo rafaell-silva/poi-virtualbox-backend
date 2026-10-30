@@ -21,6 +21,18 @@ import time
 import urllib.error
 import urllib.request
 
+# Campos de metadados repetidos em cada linha do CSV (join com k6/exp).
+META_FIELDS = [
+    "run_id",
+    "profile",
+    "scenario",
+    "vcpus",
+    "ram_gib",
+    "workers",
+    "request_mix",
+    "rep",
+]
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Executor de experimentos de carga locais.")
@@ -34,6 +46,20 @@ def parse_args():
     p.add_argument("--label", default="local")
     p.add_argument("--start-server", action="store_true", help="Iniciar servidor uvicorn automaticamente.")
     p.add_argument("--workers", type=int, default=1, help="Número de workers uvicorn (default: 1 para baseline de 1 vCPU).")
+    p.add_argument(
+        "--run-id",
+        default="",
+        help=(
+            "Identificador único da execução (join com o CSV de sistema). "
+            "Se omitido, é derivado de perfil/cenário/workers/mix/VUs."
+        ),
+    )
+    p.add_argument("--profile", default="io", help="Perfil computacional.")
+    p.add_argument("--scenario", default="", help="Cenário de provisionamento.")
+    p.add_argument("--vcpus", type=int, default=0, help="vCPUs provisionadas.")
+    p.add_argument("--ram-gib", type=float, default=0.0, help="RAM provisionada em GiB.")
+    p.add_argument("--request-mix", default="", help="Mix de requisições (uniform|mixed).")
+    p.add_argument("--rep", type=int, default=0, help="Índice da repetição (1..N).")
     args = p.parse_args()
 
     if args.size_mb is not None:
@@ -43,10 +69,12 @@ def parse_args():
 
 class SystemMetricsCollector:
     """Coletor interno de métricas com agendamento monotônico sem acúmulo de atraso."""
-    def __init__(self, interval: float, out_path: str, target_pid: int = None):
+    def __init__(self, interval: float, out_path: str, target_pid: int = None,
+                 meta: dict = None):
         self.interval = max(0.1, interval)
         self.out_path = out_path
         self.target_pid = target_pid
+        self.meta = meta or {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self.samples = 0
@@ -73,7 +101,7 @@ class SystemMetricsCollector:
         psutil.cpu_percent(interval=None)
         psutil.cpu_percent(percpu=True, interval=None)
 
-        fieldnames = ["timestamp_utc", "elapsed_s", "cpu_total_pct"]
+        fieldnames = META_FIELDS + ["timestamp_utc", "elapsed_s", "cpu_total_pct"]
         for i in range(num_cores):
             fieldnames.append(f"cpu_core_{i}_pct")
         fieldnames += [
@@ -137,6 +165,7 @@ class SystemMetricsCollector:
                 prev_dio = dio
 
                 row = {
+                    **{k: self.meta.get(k, "") for k in META_FIELDS},
                     "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "elapsed_s": round(elapsed, 3),
                     "cpu_total_pct": cpu_total,
@@ -255,10 +284,19 @@ def summarize(results: list) -> dict:
 
 def save_results(summary: dict, args, ts_str: str, out_dir: str) -> str:
     os.makedirs(out_dir, exist_ok=True)
-    fname = os.path.join(out_dir, f"exp_{args.label}_{ts_str}.csv")
+    label = getattr(args, "run_id", "") or args.label
+    fname = os.path.join(out_dir, f"exp_{label}_{ts_str}.csv")
 
     rows = [("metric", "value")]
-    rows.append(("test_run_id", f"exp_{args.label}_{ts_str}"))
+    rows.append(("test_run_id", f"exp_{label}_{ts_str}"))
+    rows.append(("run_id", label))
+    rows.append(("profile", getattr(args, "profile", "")))
+    rows.append(("scenario", getattr(args, "scenario", "")))
+    rows.append(("vcpus", getattr(args, "vcpus", "")))
+    rows.append(("ram_gib", getattr(args, "ram_gib", "")))
+    rows.append(("workers", getattr(args, "workers", "")))
+    rows.append(("request_mix", getattr(args, "request_mix", "")))
+    rows.append(("rep", getattr(args, "rep", "")))
     rows.append(("timestamp_utc", datetime.datetime.now(datetime.timezone.utc).isoformat()))
     rows.append(("target_url", args.target_url))
     rows.append(("size_mib", args.size_mib))
@@ -295,6 +333,33 @@ def main():
     ts_str = now_utc.strftime("%Y%m%dT%H%M%SZ")
     os.makedirs(args.out_dir, exist_ok=True)
 
+    # Identificador único da execução: elo de join entre exp_*, sys_* e k6_*.
+    # Formato: <perfil>_<cenário>_w<workers>_<mix>_<vus>vus_r<rep>_<UTC>
+    if args.run_id:
+        run_id = args.run_id
+    else:
+        run_id = "_".join([
+            args.profile or "exp",
+            args.scenario or "local",
+            f"w{args.workers}",
+            args.request_mix or "uniform",
+            f"{args.vus}vus",
+            f"r{args.rep or 1}",
+            ts_str,
+        ])
+    args.run_id = run_id
+    effective_label = run_id
+    meta = {
+        "run_id": run_id,
+        "profile": args.profile,
+        "scenario": args.scenario,
+        "vcpus": args.vcpus or "",
+        "ram_gib": args.ram_gib or "",
+        "workers": args.workers or "",
+        "request_mix": args.request_mix,
+        "rep": args.rep or "",
+    }
+
     target_clean = args.target_url.rstrip("/")
     workload_url = (
         f"{target_clean}/process"
@@ -323,11 +388,12 @@ def main():
             sys.exit(1)
         print("OK")
 
-    sys_csv = os.path.join(args.out_dir, f"sys_local_{args.label}_{ts_str}.csv")
+    sys_csv = os.path.join(args.out_dir, f"sys_local_{effective_label}_{ts_str}.csv")
     monitor = SystemMetricsCollector(
         interval=1.0,
         out_path=sys_csv,
         target_pid=server_proc.pid if server_proc else None,
+        meta=meta,
     )
     monitor.start()
 
@@ -347,6 +413,7 @@ def main():
     summary["test_duration_s"] = round(elapsed, 2)
 
     print(f"\n[exp] Resultados:")
+    print(f"      run_id          = {run_id}")
     print(f"      total_requests  = {summary['total_requests']}")
     print(f"      errors          = {summary['errors']} ({summary['error_rate']*100:.1f}%)")
     print(f"      latency_avg_ms  = {summary['latency_avg_ms']}")

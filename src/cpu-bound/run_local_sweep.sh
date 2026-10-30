@@ -23,6 +23,12 @@ set -euo pipefail
 INTENSITY="${INTENSITY:-$(( ${ITERATIONS:-1} * 1000 ))}" # iterações de hash por requisição
 CHUNK_KIB="${CHUNK_KIB:-64}" # bloco hasheado (>=2 KiB libera o GIL)
 WORKERS="${WORKERS:-1}" # 1 worker como baseline para VM de 1 vCPU
+PROFILE="${PROFILE:-cpu}"
+SCENARIO="${SCENARIO:-LOCAL}"
+VCPUS="${VCPUS:-$(nproc 2>/dev/null || echo 0)}"
+RAM_GIB="${RAM_GIB:-$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo 2>/dev/null || echo 0)}"
+REQUEST_MIX="${REQUEST_MIX:-uniform}"
+REP="${REP:-1}"
 PORT="${PORT:-8000}"
 DURATION="${DURATION:-20}" # 20s por nível de demanda
 VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
@@ -40,7 +46,7 @@ PLOTS_DIR="${ROOT_DIR}/plots/output"
 mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
 
 TS_START=$(date -u +%Y%m%dT%H%M%SZ)
-SWEEP_RUN_ID="sweep_${INTENSITY}i"
+SWEEP_RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_sweep_r${REP}_${TS_START}"
 
 # Porta ocupada por algo que o lsof do host NÃO enxerga (ex.: container Docker
 # com porta publicada). Detecta via connect TCP e aborta com instrução acionável.
@@ -133,6 +139,7 @@ echo "=========================================================="
 echo " Execução Coordenada de Varredura Local (Sweep)"
 echo " Identificador da Execução: ${SWEEP_RUN_ID} (${TS_START})"
 echo " Parâmetros: intensity=${INTENSITY} | chunk=${CHUNK_KIB} KiB | ${WORKERS} worker(s)"
+echo " Cenário: ${SCENARIO} | vCPUs=${VCPUS} | RAM=${RAM_GIB} GiB | mix=${REQUEST_MIX} | rep=${REP}"
 echo " Níveis de Demanda: ${VUS_LEVELS[*]} VUs (${DURATION}s cada)"
 echo "=========================================================="
 
@@ -166,6 +173,14 @@ validate_server "${SERVER_PID}"
 echo "[2/4] Iniciando coletor de métricas do sistema com ID: ${SWEEP_RUN_ID}_all..."
 ${VENV_PY} metrics/collectors/system_monitor.py \
     --label "${SWEEP_RUN_ID}_all" \
+    --run-id "${SWEEP_RUN_ID}_all" \
+    --profile "${PROFILE}" \
+    --scenario "${SCENARIO}" \
+    --vcpus "${VCPUS}" \
+    --ram-gib "${RAM_GIB}" \
+    --workers "${WORKERS}" \
+    --request-mix "${REQUEST_MIX}" \
+    --rep "${REP}" \
     --target-pid "${SERVER_PID}" \
     --include-children \
     --interval 1.0 \
@@ -190,6 +205,8 @@ echo ""
 echo "[3/4] Executando níveis de demanda..."
 for VUS in "${VUS_LEVELS[@]}"; do
     echo "  → Testando ${VUS} VUs (${DURATION}s)..."
+    TS_LEVEL=$(date -u +%Y%m%dT%H%M%SZ)
+    RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_${VUS}vus_r${REP}_${TS_LEVEL}"
     LABEL="${SWEEP_RUN_ID}_${VUS}vus"
     ${VENV_PY} metrics/collectors/run_experiment.py \
         --target-url "http://127.0.0.1:${PORT}" \
@@ -200,6 +217,14 @@ for VUS in "${VUS_LEVELS[@]}"; do
         --target-pid "${SERVER_PID}" \
         --include-children \
         --label "${LABEL}" \
+        --run-id "${RUN_ID}" \
+        --profile "${PROFILE}" \
+        --scenario "${SCENARIO}" \
+        --vcpus "${VCPUS}" \
+        --ram-gib "${RAM_GIB}" \
+        --workers "${WORKERS}" \
+        --request-mix "${REQUEST_MIX}" \
+        --rep "${REP}" \
         --out-dir "${DATA_DIR}"
     sleep 2
 done

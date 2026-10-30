@@ -44,6 +44,12 @@ OUT_DIR="data/results"
 mkdir -p "${OUT_DIR}"
 
 SCENARIO="${SCENARIO:-C1_1vcpu_1gib}"
+PROFILE="${PROFILE:-cpu}"
+WORKERS="${WORKERS:-1}"
+VCPUS="${VCPUS:-1}"
+RAM_GIB="${RAM_GIB:-1}"
+REQUEST_MIX="${REQUEST_MIX:-uniform}"
+REP="${REP:-1}"
 INTENSITY="${INTENSITY:-1000}"
 CHUNK_KIB="${CHUNK_KIB:-64}"
 DURATION="${DURATION:-45s}"
@@ -56,6 +62,7 @@ echo "======================================================="
 echo " Experimento VM (CPU-bound) — Cenário: ${SCENARIO}"
 echo " Alvo Remoto: ${TARGET_URL}"
 echo " Parâmetros: INTENSITY=${INTENSITY} | CHUNK_KIB=${CHUNK_KIB}"
+echo " Execução: workers=${WORKERS} | vCPUs=${VCPUS} | RAM=${RAM_GIB} GiB | mix=${REQUEST_MIX} | rep=${REP}"
 echo " Níveis de demanda programados: ${VUS_LEVELS[*]} VUs"
 echo "======================================================="
 
@@ -70,7 +77,7 @@ for VUS in "${VUS_LEVELS[@]}"; do
     echo ""
     echo "--- Executando nível de demanda: ${VUS} VUs ---"
     TS=$(date -u +%Y%m%dT%H%M%SZ)
-    RUN_ID="${SCENARIO}_${INTENSITY}int_${CHUNK_KIB}ki_${VUS}vus_${TS}"
+    RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_${VUS}vus_r${REP}_${TS}"
 
     # 0. Descobre o PID da aplicação na VM (para métricas de processo por núcleo)
     APP_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
@@ -80,7 +87,10 @@ for VUS in "${VUS_LEVELS[@]}"; do
     echo "  [SSH] Iniciando system_monitor.py na VM (target-pid=${APP_PID:-n/a})..."
     VM_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
         "nohup /opt/poi-cpu/.venv/bin/python /opt/poi-cpu/metrics/collectors/system_monitor.py \
-            --label ${RUN_ID} --duration 180 --interval 1.0 --machine vm \
+            --label ${RUN_ID} --run-id ${RUN_ID} --profile ${PROFILE} \
+            --scenario ${SCENARIO} --vcpus ${VCPUS} --ram-gib ${RAM_GIB} \
+            --workers ${WORKERS} --request-mix ${REQUEST_MIX} --rep ${REP} \
+            --duration 180 --interval 1.0 --machine vm \
             ${APP_PID:+--target-pid ${APP_PID} --include-children} \
             --out-dir /tmp > /tmp/monitor_${RUN_ID}.log 2>&1 &
         echo \$!")
@@ -95,7 +105,14 @@ for VUS in "${VUS_LEVELS[@]}"; do
         -e "CHUNK_KIB=${CHUNK_KIB}" \
         -e "VUS=${VUS}" \
         -e "DURATION=${DURATION}" \
-        -e "OUT_DIR=${OUT_DIR}" || true
+        -e "OUT_DIR=${OUT_DIR}" \
+        -e "RUN_ID=${RUN_ID}" \
+        -e "SCENARIO=${SCENARIO}" \
+        -e "VCPUS=${VCPUS}" \
+        -e "RAM_GIB=${RAM_GIB}" \
+        -e "WORKERS=${WORKERS}" \
+        -e "REQUEST_MIX=${REQUEST_MIX}" \
+        -e "REP=${REP}" || true
 
     # 3. Encerra o monitor na VM e recupera o CSV de métricas reais
     echo "  [SSH] Encerrando monitor na VM e transferindo CSV..."

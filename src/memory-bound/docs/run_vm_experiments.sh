@@ -48,6 +48,12 @@ OUT_DIR="data/results"
 mkdir -p "${OUT_DIR}"
 
 SCENARIO="${SCENARIO:-C1_1vcpu_1gib}"
+PROFILE="${PROFILE:-memory}"
+WORKERS="${WORKERS:-1}"
+VCPUS="${VCPUS:-1}"
+RAM_GIB="${RAM_GIB:-1}"
+REQUEST_MIX="${REQUEST_MIX:-uniform}"
+REP="${REP:-1}"
 SIZE_MIB="${SIZE_MIB:-8}"       # buffer por requisição (folga sob MAX_CONCURRENT_MIB=384)
 ITERATIONS="${ITERATIONS:-1}"
 DWELL_MS="${DWELL_MS:-200}"     # retenção do buffer (é ela que empilha o RSS)
@@ -61,6 +67,7 @@ echo "======================================================="
 echo " Experimento VM — Cenário: ${SCENARIO}"
 echo " Alvo Remoto: ${TARGET_URL}"
 echo " Parâmetros: size_mib=${SIZE_MIB} | iterations=${ITERATIONS} | dwell_ms=${DWELL_MS}"
+echo " Execução: workers=${WORKERS} | vCPUs=${VCPUS} | RAM=${RAM_GIB} GiB | mix=${REQUEST_MIX} | rep=${REP}"
 echo " Níveis de demanda programados: ${VUS_LEVELS[*]} VUs"
 echo "======================================================="
 
@@ -75,7 +82,7 @@ for VUS in "${VUS_LEVELS[@]}"; do
     echo ""
     echo "--- Executando nível de demanda: ${VUS} VUs ---"
     TS=$(date -u +%Y%m%dT%H%M%SZ)
-    RUN_ID="${SCENARIO}_${SIZE_MIB}mib_${DWELL_MS}ms_${VUS}vus_${TS}"
+    RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_${VUS}vus_r${REP}_${TS}"
 
     # 0. Descobre o PID da aplicação na VM (necessário para proc_rss_mib no CSV)
     APP_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
@@ -86,7 +93,10 @@ for VUS in "${VUS_LEVELS[@]}"; do
     echo "  [SSH] Iniciando system_monitor.py na VM (target-pid=${APP_PID:-n/a})..."
     VM_PID=$(ssh -p "${VM_PORT}" "${VM_USER}@${VM_IP}" \
         "nohup /opt/poi-memory/.venv/bin/python /opt/poi-memory/metrics/collectors/system_monitor.py \
-            --label ${RUN_ID} --duration 120 --interval 1.0 --machine vm \
+            --label ${RUN_ID} --run-id ${RUN_ID} --profile ${PROFILE} \
+            --scenario ${SCENARIO} --vcpus ${VCPUS} --ram-gib ${RAM_GIB} \
+            --workers ${WORKERS} --request-mix ${REQUEST_MIX} --rep ${REP} \
+            --duration 120 --interval 1.0 --machine vm \
             ${APP_PID:+--target-pid ${APP_PID} --include-children} \
             --out-dir /tmp > /tmp/monitor_${RUN_ID}.log 2>&1 &
         echo \$!")
@@ -103,7 +113,14 @@ for VUS in "${VUS_LEVELS[@]}"; do
         -e "DWELL_MS=${DWELL_MS}" \
         -e "VUS=${VUS}" \
         -e "DURATION=${DURATION}" \
-        -e "OUT_DIR=${OUT_DIR}" || true
+        -e "OUT_DIR=${OUT_DIR}" \
+        -e "RUN_ID=${RUN_ID}" \
+        -e "SCENARIO=${SCENARIO}" \
+        -e "VCPUS=${VCPUS}" \
+        -e "RAM_GIB=${RAM_GIB}" \
+        -e "WORKERS=${WORKERS}" \
+        -e "REQUEST_MIX=${REQUEST_MIX}" \
+        -e "REP=${REP}" || true
 
     # 3. Encerra o monitor na VM e recupera o arquivo de métricas reais da VM
     echo "  [SSH] Encerrando monitor na VM e transferindo CSV..."
