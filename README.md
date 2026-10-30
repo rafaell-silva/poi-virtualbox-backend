@@ -22,7 +22,8 @@ Três aplicações web (apenas backend, Python/FastAPI) com perfis computacionai
 │   └── validate_results.py                           # valida run_id e join exp↔sys
 ├── docs/
 │   ├── atividade.md                                   # enunciado da atividade
-│   └── virtualbox-tutorial.pdf                        # tutorial de uso da VM
+│   ├── virtualbox-tutorial.pdf                        # tutorial de uso da VM
+│   └── cloud/                                         # runbook OpenStack + nginx/systemd
 └── src/
     ├── cpu-bound/      ┐
     ├── memory-bound/   ├ cada projeto tem: app/ k6/ metrics/collectors/ plots/
@@ -158,6 +159,35 @@ python3 tools/validate_results.py src/*/data/results
 O validador confere se cada experimento novo tem `run_id`, se ele é único e se
 existe um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
 tratados como *legacy* e não quebram a validação.
+
+## Deploy em Nuvem (OpenStack/LSD)
+
+O roteiro completo, com comandos manuais e prints para o relatório, está em
+[`docs/cloud/README.md`](docs/cloud/README.md). A arquitetura recomendada usa
+**uma VM por grupo**, as três aplicações simultâneas e nginx na frente:
+
+```text
+LB poi-atividades
+  TCP 22  -> VM:22 (SSH)
+  HTTP 80 -> VM:80 (nginx)
+               /cpu/    -> 127.0.0.1:8000
+               /memory/ -> 127.0.0.1:8001
+               /io/     -> 127.0.0.1:8002
+               /health  -> 200 OK
+
+VM: volume OpenStack de 1 GB montado em /mnt/poi-data
+    logs/, io/, results/
+```
+
+Arquivos de apoio:
+
+- `docs/cloud/nginx-poi.conf` — reverse proxy por path;
+- `docs/cloud/systemd/poi-cpu.service`, `poi-memory.service`, `poi-io.service`;
+- `docs/cloud/logrotate-poi.conf` — rotação dos logs no volume.
+
+As apps escutam apenas em `127.0.0.1`; o LB fala com o nginx na porta 80. O
+`run_vm_experiments.sh` aceita `SSH_HOST`/`SSH_PORT`, `TARGET_URL`, `SERVICE`,
+`REMOTE_APP_DIR` e `REMOTE_RESULTS_DIR` para operar atrás do LB.
 
 ## Resultados
 

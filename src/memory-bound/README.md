@@ -271,3 +271,23 @@ python3 tools/validate_results.py src/memory-bound/data/results
 Verifica `run_id` presente e único em cada experimento novo e a existência de
 exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
 tratados como *legacy* (apenas aviso).
+
+---
+
+## 10. Nuvem (OpenStack/LSD)
+
+O roteiro manual completo está em
+[`docs/cloud/README.md`](../../docs/cloud/README.md). Na arquitetura com as três
+apps na mesma VM, esta aplicação escuta em `127.0.0.1:8001` e é publicada em
+`http://<LB>/memory/` pelo nginx.
+
+```bash
+WORKERS=$(nproc) HOST=127.0.0.1 APP_PORT=8001 \
+APP_DIR=/opt/poi/memory SERVICE_NAME=poi-memory \
+MAX_SIZE_MIB=128 MAX_CONCURRENT_MIB=256 \
+LOG_DIR=/mnt/poi-data/logs DATA_MOUNT=/mnt/poi-data \
+bash docs/deploy_vm.sh
+```
+
+Ajuste `MAX_CONCURRENT_MIB` ao flavor e à convivência com as outras apps. O
+limite é **por worker**; com `WORKERS=N`, o teto agregado é N × o valor.

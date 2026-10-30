@@ -214,3 +214,23 @@ python3 tools/validate_results.py src/io-bound/data/results
 Verifica `run_id` presente e único em cada experimento novo e a existência de
 exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
 tratados como *legacy* (apenas aviso).
+
+---
+
+## 9. Nuvem (OpenStack/LSD)
+
+O roteiro manual completo está em
+[`docs/cloud/README.md`](../../docs/cloud/README.md). Na arquitetura com as três
+apps na mesma VM, esta aplicação escuta em `127.0.0.1:8002` e é publicada em
+`http://<LB>/io/` pelo nginx.
+
+```bash
+WORKERS=$(nproc) HOST=127.0.0.1 APP_PORT=8002 \
+APP_DIR=/opt/poi/io SERVICE_NAME=poi-io \
+IO_DIR=/mnt/poi-data/io \
+LOG_DIR=/mnt/poi-data/logs DATA_MOUNT=/mnt/poi-data \
+bash docs/deploy_vm.sh
+```
+
+O `IO_DIR` aponta para o volume OpenStack (disco real), não para tmpfs. O
+`LOG_DIR` mantém os logs no volume.

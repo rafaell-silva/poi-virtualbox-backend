@@ -271,3 +271,24 @@ python3 tools/validate_results.py src/cpu-bound/data/results
 O validador verifica se cada experimento novo tem `run_id`, se não há `run_id`
 duplicado e se existe exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs
 antigos sem `run_id` são tratados como *legacy* e apenas avisados.
+
+---
+
+## 9. Nuvem (OpenStack/LSD)
+
+O roteiro manual completo está em
+[`docs/cloud/README.md`](../../docs/cloud/README.md). Na arquitetura com as três
+apps na mesma VM, esta aplicação escuta em `127.0.0.1:8000` e é publicada em
+`http://<LB>/cpu/` pelo nginx.
+
+O `deploy_vm.sh` aceita os parâmetros de nuvem:
+
+```bash
+WORKERS=$(nproc) HOST=127.0.0.1 APP_PORT=8000 \
+APP_DIR=/opt/poi/cpu SERVICE_NAME=poi-cpu \
+LOG_DIR=/mnt/poi-data/logs DATA_MOUNT=/mnt/poi-data \
+bash docs/deploy_vm.sh
+```
+
+`DATA_MOUNT` adiciona `RequiresMountsFor`; `LOG_DIR` redireciona stdout/stderr
+para o volume de 1 GB.
