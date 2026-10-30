@@ -451,6 +451,7 @@ done
 
 ```bash
 nproc
+sudo mkdir -p /etc/poi
 echo "WORKERS=$(nproc)" | sudo tee /etc/poi/cloud.env
 ```
 
