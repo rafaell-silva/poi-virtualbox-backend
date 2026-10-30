@@ -2,14 +2,10 @@
 """
 Gerador de gráficos a partir dos dados coletados.
 
-Lê os CSVs em data/results/ e produz:
-  1. Demanda (VUs/RPS) × Latência (avg, p90, p95)
-  2. Demanda × Requisições por segundo
-  3. Utilização de CPU ao longo do tempo (tempo real decorrido)
-  4. Consumo de memória ao longo do tempo (tempo real decorrido)
-  5. Recursos do processo alvo ao longo do tempo (CPU% e RSS MiB)
-  6. I/O de disco ao longo do tempo (leitura/escrita MiB/s)
-  7. Demanda × CPU/Memória média
+Lê os CSVs em data/results/ e produz duas figuras agrupadas:
+  1. overview_demand.png — demanda × latência, vazão, CPU, memória,
+     I/O e eficiência (eixos fixos por métrica);
+  2. overview_time.png — CPU/memória do sistema e do processo ao longo do tempo.
 
 Os gráficos "ao longo do tempo" combinam todas as amostras em uma única série
 ordenada pelo instante real de coleta (timestamp_utc), de modo que os níveis de
@@ -644,6 +640,183 @@ def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, sh
 # Main
 # --------------------------------------------------------------------------- #
 
+def _finite(values):
+    """Remove None/NaN/Inf para calcular limites de eixo sem quebrar o matplotlib."""
+    return [v for v in values if v is not None and math.isfinite(v)]
+
+
+def plot_overview(experiments, sys_data, out_dir, show, sys_run_index=None):
+    """
+    Figura única com os painéis relevantes do perfil I/O: latência, vazão,
+    CPU, memória, I/O de disco e duração de escrita/fsync em função da demanda.
+
+    Os eixos são fixados no máximo global de cada métrica para permitir
+    comparação visual entre níveis e execuções.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    lat = extract_latency_series(experiments)
+    rps = extract_rps_series(experiments)
+    res = _demand_resource_points(experiments, sys_data, sys_run_index)
+
+    demands = _finite(
+        [p[0] for p in lat] + [p[0] for p in rps] + [p["demand"] for p in res]
+    )
+    if not demands:
+        print("[plots] Sem dados para a visão geral demanda × recursos.")
+        return
+    xmax = max(max(demands) * 1.10, 1.0)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+    ax_lat, ax_rps, ax_cpu, ax_mem, ax_io, ax_app = axes.ravel()
+
+    if lat:
+        ax_lat.plot([p[0] for p in lat], [p[1] for p in lat], "o-", label="média")
+        ax_lat.plot([p[0] for p in lat], [p[2] for p in lat], "s--", label="p90")
+        ax_lat.plot([p[0] for p in lat], [p[3] for p in lat], "^-", label="p95")
+        ymax = max(_finite([p[1] for p in lat] + [p[2] for p in lat] + [p[3] for p in lat]))
+        ax_lat.set_ylim(0, max(ymax * 1.15, 1.0))
+        ax_lat.legend(fontsize=8)
+    ax_lat.set_title("Latência × Demanda")
+    ax_lat.set_ylabel("ms")
+
+    if rps:
+        ax_rps.plot([p[0] for p in rps], [p[1] for p in rps], "o-", color="tab:green")
+        ax_rps.set_ylim(0, max(max(_finite([p[1] for p in rps])) * 1.15, 1.0))
+    ax_rps.set_title("Vazão × Demanda")
+    ax_rps.set_ylabel("req/s")
+
+    cpu_vals = _finite([p["cpu"] for p in res])
+    if cpu_vals:
+        ax_cpu.plot([p["demand"] for p in res], [p["cpu"] for p in res], "o-", color="tab:red")
+        ax_cpu.set_ylim(0, max(max(cpu_vals) * 1.15, 1.0))
+    ax_cpu.set_title("CPU × Demanda")
+    ax_cpu.set_ylabel("% de CPU")
+
+    if res and all(p["mem"] is not None for p in res):
+        mem_vals = [p["mem"] for p in res]
+        mem_label = "RSS do processo (MiB)"
+    elif res and all(p["mem_pct"] is not None for p in res):
+        mem_vals = [p["mem_pct"] for p in res]
+        mem_label = "Memória do sistema (%)"
+    else:
+        mem_vals = []
+        mem_label = "Memória"
+    if mem_vals:
+        ax_mem.plot([p["demand"] for p in res], mem_vals, "o-", color="tab:purple")
+        ax_mem.set_ylim(0, max(max(_finite(mem_vals)) * 1.15, 1.0))
+    ax_mem.set_title("Memória × Demanda")
+    ax_mem.set_ylabel(mem_label)
+
+    if res:
+        dw = [p["disk_write"] for p in res]
+        dr = [p["disk_read"] for p in res]
+        if any(v is not None for v in dw):
+            ax_io.plot([p["demand"] for p in res],
+                       [v if v is not None else float("nan") for v in dw],
+                       "o-", label="escrita")
+        if any(v is not None for v in dr):
+            ax_io.plot([p["demand"] for p in res],
+                       [v if v is not None else float("nan") for v in dr],
+                       "s--", label="leitura")
+        io_vals = _finite(dw + dr)
+        if io_vals:
+            ax_io.set_ylim(0, max(max(io_vals) * 1.15, 1.0))
+        if any(v is not None for v in dw + dr):
+            ax_io.legend(fontsize=8)
+    ax_io.set_title("I/O de disco × Demanda")
+    ax_io.set_ylabel("MiB/s")
+
+    # Duração do trabalho de I/O reportada pela própria aplicação/k6.
+    app = []
+    for e in experiments:
+        d = float_or_none(e.get("vus") or e.get("vus_max"))
+        w = float_or_none(e.get("app_write_duration_avg_ms"))
+        f = float_or_none(e.get("app_fsync_duration_avg_ms"))
+        if d is not None and (w is not None or f is not None):
+            app.append((d, w, f))
+    app.sort(key=lambda x: x[0])
+    if app:
+        if any(p[1] is not None for p in app):
+            ax_app.plot([p[0] for p in app],
+                        [p[1] if p[1] is not None else float("nan") for p in app],
+                        "o-", label="escrita")
+        if any(p[2] is not None for p in app):
+            ax_app.plot([p[0] for p in app],
+                        [p[2] if p[2] is not None else float("nan") for p in app],
+                        "s--", label="fsync")
+        app_vals = _finite([p[1] for p in app] + [p[2] for p in app])
+        if app_vals:
+            ax_app.set_ylim(0, max(max(app_vals) * 1.15, 1.0))
+        ax_app.legend(fontsize=8)
+    ax_app.set_title("Trabalho de I/O do app × Demanda")
+    ax_app.set_ylabel("ms")
+
+    for ax in axes.ravel():
+        ax.set_xlim(0, xmax)
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    for ax in axes[-1]:
+        ax.set_xlabel("VUs (demanda)")
+
+    fig.suptitle("Visão geral: demanda × latência, vazão e I/O", fontsize=13)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "overview_demand.png")
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    print(f"[plots] → {path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_overview_time(sys_series, out_dir, show):
+    """Figura única com CPU/memória do sistema e do processo ao longo do tempo."""
+    import matplotlib.pyplot as plt
+
+    if not sys_series:
+        print("[plots] Sem séries temporais para a visão geral.")
+        return
+
+    specs = [
+        ("cpu", "CPU total do sistema", "%"),
+        ("mem", "Memória do sistema", "%"),
+        ("proc_cpu", "CPU do processo", "%"),
+        ("proc_rss", "RSS do processo", "MiB"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
+    any_data = False
+    xmax = 0.0
+    for ax, (key, title, unit) in zip(axes.ravel(), specs):
+        xs, ys = combine_on_timeline(sys_series, key)
+        if xs:
+            any_data = True
+            xmax = max(xmax, max(xs))
+            ax.plot(xs, [v if v is not None else float("nan") for v in ys], lw=1.2)
+            vals = _finite(ys)
+            if vals:
+                ax.set_ylim(0, max(max(vals) * 1.15, 1.0))
+        ax.set_title(title)
+        ax.set_ylabel(unit)
+        ax.grid(alpha=0.3)
+    if not any_data:
+        plt.close(fig)
+        print("[plots] Sem amostras temporais para a visão geral.")
+        return
+    for ax in axes[-1]:
+        ax.set_xlabel("tempo desde a primeira amostra (s)")
+    for ax in axes.ravel():
+        ax.set_xlim(0, max(xmax * 1.02, 1.0))
+    fig.suptitle("Visão geral: recursos ao longo do tempo", fontsize=13)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "overview_time.png")
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    print(f"[plots] → {path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -678,19 +851,13 @@ def main():
     res_series = {p: sys_series[p] for p in res_paths}
     proc_series = {p: sys_series[p] for p in proc_paths}
 
-    plot_latency(lat_points, args.out_dir, args.show)
-    plot_rps(rps_points, args.out_dir, args.show)
-    _plot_over_time(res_series, args.out_dir, args.show,
-                    key="cpu", ylabel="CPU total (%)",
-                    title="Utilização de CPU ao longo do tempo",
-                    filename="cpu_over_time.png", ylim=(0, 105))
-    _plot_over_time(res_series, args.out_dir, args.show,
-                    key="mem", ylabel="Memória usada (%)",
-                    title="Consumo de memória ao longo do tempo",
-                    filename="memory_over_time.png", ylim=(0, 105))
-    plot_proc_resources(proc_series, args.out_dir, args.show)
-    plot_disk(res_series, args.out_dir, args.show)
-    plot_demand_vs_resources(experiments, sys_data, args.out_dir, args.show, sys_run_index)
+    # Série temporal agrupada: níveis + monitor contínuo como complemento.
+    time_series = dict(res_series)
+    for p, s in proc_series.items():
+        time_series.setdefault(p, s)
+
+    plot_overview(experiments, sys_data, args.out_dir, args.show, sys_run_index)
+    plot_overview_time(time_series, args.out_dir, args.show)
 
     print(f"\n[plots] Concluído. Arquivos em '{args.out_dir}/'.")
 
