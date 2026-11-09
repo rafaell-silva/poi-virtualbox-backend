@@ -214,6 +214,33 @@ As apps escutam apenas em `127.0.0.1`; o LB fala com o nginx na porta 80. O
 `run_vm_experiments.sh` aceita `SSH_HOST`/`SSH_PORT`, `TARGET_URL`, `SERVICE`,
 `REMOTE_APP_DIR` e `REMOTE_RESULTS_DIR` para operar atrás do LB.
 
+## Conteinerização e Deploy com Docker Compose (Atividade 3)
+
+As três aplicações possuem imagens Docker dedicadas publicadas no Docker Hub e orquestradas via [`docker-compose.yml`](docker-compose.yml) na raiz do repositório:
+
+| Aplicação | Dockerfile | Imagem no Docker Hub | Porta na VM (loopback) |
+|---|---|---|---|
+| CPU-bound | [`src/cpu-bound/app/Dockerfile`](src/cpu-bound/app/Dockerfile) | `rafaellsb/poi-cpu-bound:latest` | `127.0.0.1:8000` |
+| Memory-bound | [`src/memory-bound/app/Dockerfile`](src/memory-bound/app/Dockerfile) | `rafaellsb/poi-memory-bound:latest` | `127.0.0.1:8001` |
+| IO-bound | [`src/io-bound/app/Dockerfile`](src/io-bound/app/Dockerfile) | `rafaellsb/poi-io-bound:latest` | `127.0.0.1:8002` |
+
+### Build e Push para o Docker Hub
+```bash
+docker build -t rafaellsb/poi-cpu-bound:latest ./src/cpu-bound/app
+docker build -t rafaellsb/poi-memory-bound:latest ./src/memory-bound/app
+docker build -t rafaellsb/poi-io-bound:latest ./src/io-bound/app
+
+docker push rafaellsb/poi-cpu-bound:latest
+docker push rafaellsb/poi-memory-bound:latest
+docker push rafaellsb/poi-io-bound:latest
+```
+
+### Execução na VM da Cloud do LSD com Docker Compose
+```bash
+docker compose -f /opt/poi-docker/docker-compose.yml up -d
+docker compose -f /opt/poi-docker/docker-compose.yml ps
+```
+
 ## Resultados
 
 - Resultados brutos: `src/*/data/results/` (CSVs do k6 e `sys_vm_*` da VM).
