@@ -1,0 +1,57 @@
+services:
+  poi-cpu:
+    image: rafaellsb/poi-cpu-bound:latest
+    build: ./src/cpu-bound/app
+    container_name: poi-cpu
+    hostname: poi-cpu-container
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - DEFAULT_INTENSITY=1000
+      - DEFAULT_CHUNK_KIB=64
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  poi-memory:
+    image: rafaellsb/poi-memory-bound:latest
+    build: ./src/memory-bound/app
+    container_name: poi-memory
+    hostname: poi-memory-container
+    ports:
+      - "127.0.0.1:8001:8000"
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - MAX_CONCURRENT_MIB=512
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  poi-io:
+    image: rafaellsb/poi-io-bound:latest
+    build: ./src/io-bound/app
+    container_name: poi-io
+    hostname: poi-io-container
+    ports:
+      - "127.0.0.1:8002:8000"
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - IO_DIR=/data/io
+      - DEFAULT_SIZE_MB=8
+      - DEFAULT_ITERATIONS=1
+      - IO_CHUNK_KB=1024
+    volumes:
+      - ${POI_DATA_DIR:-/mnt/poi-data}/io:/data/io
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
