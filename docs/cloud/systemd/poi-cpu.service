@@ -1,0 +1,39 @@
+# /etc/systemd/system/poi-cpu.service
+# Template para a VM da nuvem (Ubuntu 24.04). Ajuste User/WorkingDirectory,
+# WORKERS e o caminho do volume se forem diferentes.
+#
+# Instalação manual:
+#   sudo cp poi-cpu.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now poi-cpu
+#   systemctl status poi-cpu --no-pager
+
+[Unit]
+Description=POI CPU-bound FastAPI Workload
+After=network-online.target
+Wants=network-online.target
+# Falha se o volume não estiver montado, em vez de gravar logs no disco raiz.
+RequiresMountsFor=/mnt/poi-data
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/poi/cpu
+Environment=PYTHONUNBUFFERED=1
+Environment=WORKERS=2
+EnvironmentFile=-/etc/poi/cloud.env
+ExecStart=/opt/poi/cpu/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers ${WORKERS} \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1 \
+    --log-level info
+StandardOutput=append:/mnt/poi-data/logs/poi-cpu.log
+StandardError=append:/mnt/poi-data/logs/poi-cpu.log
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

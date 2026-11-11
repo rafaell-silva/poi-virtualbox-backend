@@ -1,0 +1,10 @@
+perfil,cenario,workers,request_mix,rep,vus_levels,duracao_s,workload,status,run_ids,observacoes
+cpu,LOCAL,1,uniform,1,"1 2 4 8",30,"intensity=1000; chunk_kib=64",pendente,,linha de base
+cpu,LOCAL,N,uniform,1,"1 2 4 8",30,"intensity=1000; chunk_kib=64",pendente,,comparar com workers=1
+cpu,LOCAL,N,mixed,1,"1 2 4 8",30,"intensity=1000; chunk_kib=64",pendente,,GET/POST
+memory,LOCAL,1,uniform,1,"1 2 4 8",30,"size_mib=8; dwell_ms=200",pendente,,linha de base
+memory,LOCAL,N,uniform,1,"1 2 4 8",30,"size_mib=8; dwell_ms=200",pendente,,comparar com workers=1
+memory,LOCAL,N,mixed,1,"1 2 4 8",30,"size_mib=8; dwell_ms=200",pendente,,GET/POST
+io,LOCAL,1,uniform,1,"1 2 4 8",30,"size_mib=8; iterations=1; IO_DIR=disco real",pendente,,linha de base
+io,LOCAL,N,uniform,1,"1 2 4 8",30,"size_mib=8; iterations=1; IO_DIR=disco real",pendente,,comparar com workers=1
+io,LOCAL,N,mixed,1,"1 2 4 8",30,"size_mib=8; iterations=1; IO_DIR=disco real",pendente,,GET/POST

@@ -31,7 +31,13 @@ set -euo pipefail
 SIZE_MIB="${SIZE_MIB:-${SIZE_MB:-8}}"
 ITERATIONS="${ITERATIONS:-1}"
 DWELL_MS="${DWELL_MS:-200}" # tempo de retenção do buffer (memory-bound)
-WORKERS="${WORKERS:-1}" # 1 worker como baseline para VM de 1 vCPU
+WORKERS="${WORKERS:-$(nproc 2>/dev/null || echo 1)}" # usa todos os núcleos por padrão (multi-worker)
+PROFILE="${PROFILE:-memory}"
+SCENARIO="${SCENARIO:-LOCAL}"
+VCPUS="${VCPUS:-$(nproc 2>/dev/null || echo 0)}"
+RAM_GIB="${RAM_GIB:-$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo 2>/dev/null || echo 0)}"
+REQUEST_MIX="${REQUEST_MIX:-uniform}"
+REP="${REP:-1}"
 PORT="${PORT:-8000}"
 DURATION="${DURATION:-20}" # 20s por nível de demanda
 VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
@@ -44,12 +50,22 @@ else
     VENV_UV="${ROOT_DIR}/.venv/bin/uvicorn"
     VENV_PY="${ROOT_DIR}/.venv/bin/python"
 fi
-DATA_DIR="${ROOT_DIR}/data/results"
-PLOTS_DIR="${ROOT_DIR}/plots/output"
+# Determina próximo diretório sequencial para data/resultsN e plots/outputN
+BASE_DATA_DIR="${ROOT_DIR}/data"
+BASE_PLOTS_DIR="${ROOT_DIR}/plots"
+mkdir -p "${BASE_DATA_DIR}" "${BASE_PLOTS_DIR}"
+
+idx=1
+while [ -d "${BASE_DATA_DIR}/results${idx}" ] || [ -d "${BASE_PLOTS_DIR}/output${idx}" ]; do
+    idx=$((idx + 1))
+done
+
+DATA_DIR="${BASE_DATA_DIR}/results${idx}"
+PLOTS_DIR="${BASE_PLOTS_DIR}/output${idx}"
 mkdir -p "${DATA_DIR}" "${PLOTS_DIR}"
 
 TS_START=$(date -u +%Y%m%dT%H%M%SZ)
-SWEEP_RUN_ID="sweep_${SIZE_MIB}m"
+SWEEP_RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_sweep_r${REP}_${TS_START}"
 
 # Porta ocupada por algo que o lsof do host NÃO enxerga (ex.: container Docker
 # com porta publicada). Detecta via connect TCP e aborta com instrução acionável.
@@ -113,7 +129,13 @@ validate_server() {
         exit 1
     fi
     local logged_pid
-    logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    # Com --workers N o uvicorn registra um "parent process" (supervisor) e um
+    # "server process" por worker. Monitorar o supervisor com --include-children
+    # agrega todos os workers; monitorar só um worker subestima a CPU/RSS.
+    logged_pid=$(sed -n 's/.*Started parent process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    if [ -z "${logged_pid}" ]; then
+        logged_pid=$(sed -n 's/.*Started server process \[\([0-9]*\)\].*/\1/p' /tmp/sweep_uvicorn.log | head -1)
+    fi
     if [ -n "${logged_pid}" ] && [ "${logged_pid}" != "${pid}" ]; then
         echo "      Nota: Ajustando SERVER_PID de ${pid} para PID nativo ${logged_pid}."
         SERVER_PID="${logged_pid}"
@@ -142,6 +164,7 @@ echo "=========================================================="
 echo " Execução Coordenada de Varredura Local (Sweep)"
 echo " Identificador da Execução: ${SWEEP_RUN_ID} (${TS_START})"
 echo " Parâmetros: ${SIZE_MIB} MiB | ${ITERATIONS} iteração(ões) | dwell ${DWELL_MS} ms | ${WORKERS} worker(s)"
+echo " Cenário: ${SCENARIO} | vCPUs=${VCPUS} | RAM=${RAM_GIB} GiB | mix=${REQUEST_MIX} | rep=${REP}"
 echo " Níveis de Demanda: ${VUS_LEVELS[*]} VUs (${DURATION}s cada)"
 echo "=========================================================="
 
@@ -175,6 +198,14 @@ validate_server "${SERVER_PID}"
 echo "[2/4] Iniciando coletor de métricas do sistema com ID: ${SWEEP_RUN_ID}_all..."
 ${VENV_PY} metrics/collectors/system_monitor.py \
     --label "${SWEEP_RUN_ID}_all" \
+    --run-id "${SWEEP_RUN_ID}_all" \
+    --profile "${PROFILE}" \
+    --scenario "${SCENARIO}" \
+    --vcpus "${VCPUS}" \
+    --ram-gib "${RAM_GIB}" \
+    --workers "${WORKERS}" \
+    --request-mix "${REQUEST_MIX}" \
+    --rep "${REP}" \
     --target-pid "${SERVER_PID}" \
     --include-children \
     --interval 1.0 \
@@ -199,6 +230,8 @@ echo ""
 echo "[3/4] Executando níveis de demanda..."
 for VUS in "${VUS_LEVELS[@]}"; do
     echo "  → Testando ${VUS} VUs (${DURATION}s)..."
+    TS_LEVEL=$(date -u +%Y%m%dT%H%M%SZ)
+    RUN_ID="${PROFILE}_${SCENARIO}_w${WORKERS}_${REQUEST_MIX}_${VUS}vus_r${REP}_${TS_LEVEL}"
     LABEL="${SWEEP_RUN_ID}_${VUS}vus"
     ${VENV_PY} metrics/collectors/run_experiment.py \
         --target-url "http://127.0.0.1:${PORT}" \
@@ -210,6 +243,14 @@ for VUS in "${VUS_LEVELS[@]}"; do
         --target-pid "${SERVER_PID}" \
         --include-children \
         --label "${LABEL}" \
+        --run-id "${RUN_ID}" \
+        --profile "${PROFILE}" \
+        --scenario "${SCENARIO}" \
+        --vcpus "${VCPUS}" \
+        --ram-gib "${RAM_GIB}" \
+        --workers "${WORKERS}" \
+        --request-mix "${REQUEST_MIX}" \
+        --rep "${REP}" \
         --out-dir "${DATA_DIR}"
     sleep 2
 done

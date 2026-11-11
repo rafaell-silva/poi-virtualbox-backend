@@ -1,0 +1,36 @@
+# /etc/systemd/system/poi-io.service
+# Template para a VM da nuvem (Ubuntu 24.04). O IO_DIR aponta para o volume
+# OpenStack montado em /mnt/poi-data; assim a carga de I/O usa disco de nuvem.
+
+[Unit]
+Description=POI IO-bound FastAPI Workload
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/poi-data
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/poi/io
+Environment=PYTHONUNBUFFERED=1
+Environment=WORKERS=2
+Environment=IO_DIR=/mnt/poi-data/io
+Environment=DEFAULT_SIZE_MB=8
+Environment=DEFAULT_ITERATIONS=1
+Environment=IO_CHUNK_KB=1024
+EnvironmentFile=-/etc/poi/cloud.env
+ExecStart=/opt/poi/io/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8002 \
+    --workers ${WORKERS} \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1 \
+    --log-level info
+StandardOutput=append:/mnt/poi-data/logs/poi-io.log
+StandardError=append:/mnt/poi-data/logs/poi-io.log
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

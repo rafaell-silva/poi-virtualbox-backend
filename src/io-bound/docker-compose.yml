@@ -1,11 +1,18 @@
-version: '3.8'
 services:
-  app:
+  poi-io:
+    image: rafaellsb/poi-io-bound:latest
     build: ./app
+    container_name: poi-io
+    hostname: poi-io-container
     ports:
-      - "8000:8000"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
+      - "8002:8000"
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - IO_DIR=/data/io
+      - DEFAULT_SIZE_MB=8
+      - DEFAULT_ITERATIONS=1
+      - IO_CHUNK_KB=1024
+    volumes:
+      - ${POI_DATA_DIR:-/mnt/poi-data}/io:/data/io
+    restart: unless-stopped
+

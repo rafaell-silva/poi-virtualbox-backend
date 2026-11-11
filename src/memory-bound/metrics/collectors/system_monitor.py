@@ -29,6 +29,13 @@ workers (uvicorn multiprocesso), os demais processos filhos não serão somados 
 PID monitorado. Use `--include-children` para agregar RSS e CPU de toda a árvore
 de processos — indispensável com `uvicorn --workers N > 1`, onde o PID principal
 é apenas o supervisor e reportaria ~0% de CPU.
+
+Metadados de execução:
+----------------------
+As flags `--run-id`, `--profile`, `--scenario`, `--vcpus`, `--ram-gib`,
+`--workers`, `--request-mix` e `--rep` são gravadas como colunas em cada linha do
+CSV. O `run_id` é o elo de join com o resumo do k6/experimento: sem ele, o
+gerador de gráficos precisa adivinhar a qual execução cada arquivo pertence.
 """
 
 import argparse
@@ -213,6 +220,28 @@ def parse_args():
         choices=["local", "vm"],
         help="Etiqueta identificadora da origem física/virtual dos dados (local ou vm).",
     )
+    p.add_argument(
+        "--run-id",
+        default="",
+        help="Identificador único da execução; elo de join com o CSV do k6/experimento.",
+    )
+    p.add_argument("--profile", default="", help="Perfil computacional (cpu|memory|io).")
+    p.add_argument(
+        "--scenario",
+        default="",
+        help="Cenário de provisionamento (ex.: C1_1vcpu_1gib).",
+    )
+    p.add_argument("--vcpus", type=int, default=0, help="vCPUs provisionadas no cenário.")
+    p.add_argument("--ram-gib", type=float, default=0.0, help="RAM provisionada em GiB.")
+    p.add_argument(
+        "--workers", type=int, default=0, help="Número de workers uvicorn em execução."
+    )
+    p.add_argument(
+        "--request-mix",
+        default="",
+        help="Mix de requisições do experimento (uniform|mixed).",
+    )
+    p.add_argument("--rep", type=int, default=0, help="Índice da repetição (1..N).")
     args = p.parse_args()
 
     # Validação estrita de parâmetros de amostragem
@@ -226,6 +255,14 @@ def parse_args():
 
 def build_fieldnames(num_cores: int, has_pid: bool) -> list:
     fields = [
+        "run_id",
+        "profile",
+        "scenario",
+        "vcpus",
+        "ram_gib",
+        "workers",
+        "request_mix",
+        "rep",
         "timestamp_utc",
         "elapsed_s",
         "cpu_percent_total",
@@ -264,9 +301,26 @@ def main():
 
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     ts_str = now_utc.strftime("%Y%m%dT%H%M%SZ")
+
+    def _safe_token(value: str) -> str:
+        """Normaliza um token para uso seguro em nome de arquivo."""
+        return "".join(c if c.isalnum() or c in "-_." else "_" for c in value)
+
+    label = _safe_token(args.run_id) if args.run_id else _safe_token(args.label)
     filename = os.path.join(
-        args.out_dir, f"sys_{args.machine}_{args.label}_{ts_str}.csv"
+        args.out_dir, f"sys_{args.machine}_{label}_{ts_str}.csv"
     )
+
+    metadata = {
+        "run_id": args.run_id,
+        "profile": args.profile,
+        "scenario": args.scenario,
+        "vcpus": args.vcpus or "",
+        "ram_gib": args.ram_gib or "",
+        "workers": args.workers or "",
+        "request_mix": args.request_mix,
+        "rep": args.rep or "",
+    }
 
     proc = None
     if args.target_pid is not None:
@@ -291,6 +345,11 @@ def main():
     print(f"[monitor] Iniciando coleta de recursos:")
     print(f"          Destino: {filename}")
     print(f"          Intervalo: {args.interval}s | Origem declarada: {args.machine}")
+    if args.run_id:
+        print(
+            f"          run_id={args.run_id} | cenário={args.scenario or 'n/a'} | "
+            f"workers={args.workers or 'n/a'} | mix={args.request_mix or 'n/a'}"
+        )
     if args.duration > 0:
         print(f"          Duração máxima programada: {args.duration}s")
     else:
@@ -395,6 +454,7 @@ def main():
             prev_dio = dio
 
             row = {
+                **metadata,
                 "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "elapsed_s": round(elapsed, 3),
                 "cpu_percent_total": cpu_total,

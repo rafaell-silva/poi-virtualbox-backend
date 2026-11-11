@@ -52,6 +52,35 @@ const DWELL_MS = !isNaN(rawDwell) && rawDwell >= 0 ? rawDwell : 200;
 
 const OUT_DIR = (__ENV.OUT_DIR || "data/results").replace(/\/+$/, "");
 
+// Metadados de execução (join com o CSV do system_monitor).
+const RUN_ID = __ENV.RUN_ID || "";
+const PROFILE = "memory";
+const SCENARIO = __ENV.SCENARIO || "";
+const VCPUS = __ENV.VCPUS || "";
+const RAM_GIB = __ENV.RAM_GIB || "";
+const WORKERS = __ENV.WORKERS || "";
+const REQUEST_MIX = __ENV.REQUEST_MIX || __ENV.MIX || "uniform";
+
+// Parâmetros comuns das requisições de carga.
+const REQUEST_PARAMS = {
+  timeout: "30s",
+  headers: { "Accept": "application/json", "Cache-Control": "no-cache" },
+};
+
+// REQUEST_MIX=uniform mantém só GET (baseline). REQUEST_MIX=mixed alterna
+// GET/POST no mesmo endpoint de workload para variar o tipo de requisição.
+function workloadRequest() {
+  if (REQUEST_MIX === "mixed") {
+    return Math.random() < 0.5
+      ? http.get(WORKLOAD_URL, REQUEST_PARAMS)
+      : http.post(WORKLOAD_URL, null, REQUEST_PARAMS);
+  }
+  return http.get(WORKLOAD_URL, REQUEST_PARAMS);
+}
+
+const REP = __ENV.REP || "";
+
+
 const WORKLOAD_URL = `${TARGET_URL}/workload?size_mib=${SIZE_MIB}&iterations=${ITERATIONS}&dwell_ms=${DWELL_MS}`;
 
 // -------------------------------------------------------------------------- //
@@ -114,13 +143,7 @@ export const options = buildOptions();
 // Cenário Principal
 // -------------------------------------------------------------------------- //
 export default function () {
-  const res = http.get(WORKLOAD_URL, {
-    timeout: "30s",
-    headers: {
-      "Accept": "application/json",
-      "Cache-Control": "no-cache",
-    },
-  });
+  const res = workloadRequest();
 
   totalRequests.add(1);
 
@@ -196,6 +219,16 @@ export function handleSummary(data) {
   const rows = [
     "metric,value",
     `test_run_id,k6_ramp_${SIZE_MIB}mib_${ts}`,
+    `run_id,${RUN_ID}`,
+    `profile,${PROFILE}`,
+    `scenario,${SCENARIO}`,
+    `vcpus,${VCPUS}`,
+    `ram_gib,${RAM_GIB}`,
+    `workers,${WORKERS}`,
+    `request_mix,${REQUEST_MIX}`,
+    `rep,${REP}`,
+    `ended_at,${new Date().toISOString()}`,
+    `duration_s,${((data.state && data.state.testRunDurationMs) || 0) / 1000}`,
     `timestamp_utc,${new Date().toISOString()}`,
     `workload_model,closed_vu_ramp`,
     `target_url,${TARGET_URL}`,

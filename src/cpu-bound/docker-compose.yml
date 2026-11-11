@@ -1,11 +1,14 @@
-version: '3.8'
 services:
-  app:
+  poi-cpu:
+    image: rafaellsb/poi-cpu-bound:latest
     build: ./app
+    container_name: poi-cpu
+    hostname: poi-cpu-container
     ports:
       - "8000:8000"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 256M
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - DEFAULT_INTENSITY=1000
+      - DEFAULT_CHUNK_KIB=64
+    restart: unless-stopped
+

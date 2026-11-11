@@ -150,7 +150,7 @@ def info():
     }
 
 
-@app.get("/process", summary="Carga IO-bound: escrita com fsync + leitura em disco")
+@app.api_route("/process", methods=["GET", "POST"], summary="Carga IO-bound: escrita com fsync + leitura em disco")
 async def process(
     size_mb: int = Query(default=DEFAULT_SIZE_MB, ge=1, le=1024,
                          description="Tamanho do arquivo em MiB (1–1024)."),
