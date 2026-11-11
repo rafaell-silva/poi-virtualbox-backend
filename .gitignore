@@ -16,3 +16,13 @@ clouds.yaml
 *.pem
 *.key
 docs/cloud/evidence/
+
+# Resultados de benchmarks e experimentos
+data/results/
+data/results*/
+data/result*/
+plots/output/
+plots/output*/
+plots/plot*/
+**/data/results*
+**/plots/output*

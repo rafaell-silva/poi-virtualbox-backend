@@ -48,8 +48,19 @@ else
     exit 1
 fi
 
-OUT_DIR="data/results"
-mkdir -p "${OUT_DIR}"
+# Determina próximo diretório sequencial para data/resultsN e plots/outputN
+BASE_DATA_DIR="data"
+BASE_PLOTS_DIR="plots"
+mkdir -p "${BASE_DATA_DIR}" "${BASE_PLOTS_DIR}"
+
+idx=1
+while [ -d "${BASE_DATA_DIR}/results${idx}" ] || [ -d "${BASE_PLOTS_DIR}/output${idx}" ]; do
+    idx=$((idx + 1))
+done
+
+OUT_DIR="${BASE_DATA_DIR}/results${idx}"
+PLOTS_DIR="${BASE_PLOTS_DIR}/output${idx}"
+mkdir -p "${OUT_DIR}" "${PLOTS_DIR}"
 
 SCENARIO="${SCENARIO:-C1_1vcpu_1gib}"
 PROFILE="${PROFILE:-cpu}"
@@ -67,8 +78,8 @@ CHUNK_KIB="${CHUNK_KIB:-64}"
 DURATION="${DURATION:-45s}"
 SERVICE="${SERVICE:-poi-cpu}"
 
-# Níveis de demanda conservadores para 1 vCPU / 1 GiB RAM
-VUS_LEVELS=(1 2 4 8 16)
+# Níveis de demanda programados (1..32 VUs)
+VUS_LEVELS=(${VUS_LEVELS:-1 2 4 8 16 32})
 
 echo "======================================================="
 echo " Experimento VM (CPU-bound) — Cenário: ${SCENARIO}"
@@ -151,6 +162,15 @@ done
 echo ""
 echo "======================================================="
 echo " Todos os níveis concluídos para ${SCENARIO}"
-echo " Gere os gráficos com:"
-echo "   python plots/generate_plots.py"
+echo " Dados salvos em: ${OUT_DIR}/"
+echo " Gráficos salvos em: ${PLOTS_DIR}/"
 echo "======================================================="
+
+# Dispara a geração de gráficos para a rodada atual
+if [ -f ".venv/Scripts/python.exe" ]; then
+    .venv/Scripts/python.exe plots/generate_plots.py --results-dir "${OUT_DIR}" --out-dir "${PLOTS_DIR}"
+elif [ -f ".venv/bin/python" ]; then
+    .venv/bin/python plots/generate_plots.py --results-dir "${OUT_DIR}" --out-dir "${PLOTS_DIR}"
+else
+    python3 plots/generate_plots.py --results-dir "${OUT_DIR}" --out-dir "${PLOTS_DIR}" 2>/dev/null || python plots/generate_plots.py --results-dir "${OUT_DIR}" --out-dir "${PLOTS_DIR}"
+fi

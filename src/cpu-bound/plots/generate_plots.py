@@ -1142,11 +1142,34 @@ def plot_overview_time(sys_series, out_dir, show):
     plt.close(fig)
 
 
+def resolve_default_dirs(results_dir: str, out_dir: str):
+    """
+    Se os diretórios padrão data/results ou plots/output não existirem ou estiverem vazios,
+    detecta automaticamente a pasta versionada mais recente (ex: data/results2 -> plots/output2).
+    """
+    if results_dir == "data/results" and (not os.path.exists(results_dir) or not os.listdir(results_dir)):
+        import re
+        cands = []
+        for p in glob.glob("data/results*"):
+            m = re.search(r"results(\d+)$", p)
+            if m and os.path.isdir(p) and os.listdir(p):
+                cands.append((int(m.group(1)), p))
+        if cands:
+            cands.sort(key=lambda x: x[0])
+            latest_idx, latest_path = cands[-1]
+            results_dir = latest_path
+            if out_dir == "plots/output":
+                out_dir = f"plots/output{latest_idx}"
+
+    return results_dir, out_dir
+
+
 def main():
     args = parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
+    results_dir, out_dir = resolve_default_dirs(args.results_dir, args.out_dir)
+    os.makedirs(out_dir, exist_ok=True)
 
-    experiments, sys_data = load_all_experiments(args.results_dir)
+    experiments, sys_data = load_all_experiments(results_dir)
 
     if args.list_runs:
         list_runs(experiments)
@@ -1185,7 +1208,7 @@ def main():
             )
             sys.exit(0)
         print(
-            f"[plots] Nenhum dado encontrado em '{args.results_dir}'.\n"
+            f"[plots] Nenhum dado encontrado em '{results_dir}'.\n"
             "        Execute primeiro os experimentos com:\n"
             "          python metrics/collectors/run_experiment.py --start-server ...\n"
             "        ou com k6:\n"
@@ -1242,10 +1265,10 @@ def main():
         for p, s in proc_series.items():
             time_series.setdefault(p, s)
 
-    plot_overview(experiments, sys_data, args.out_dir, args.show, sys_run_index)
-    plot_overview_time(time_series, args.out_dir, args.show)
+    plot_overview(experiments, sys_data, out_dir, args.show, sys_run_index)
+    plot_overview_time(time_series, out_dir, args.show)
 
-    print(f"\n[plots] Concluído. Arquivos em '{args.out_dir}/'.")
+    print(f"\n[plots] Concluído. Arquivos em '{out_dir}/'.")
 
 
 if __name__ == "__main__":
