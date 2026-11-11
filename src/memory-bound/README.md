@@ -86,15 +86,26 @@ pip install -r requirements.txt
 
 ### 4.2. Iniciar a Aplicação
 
-- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
-- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **Linux / Git Bash:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
+- **PowerShell:** `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
+
+> Ajuste `--workers` ao número de núcleos da máquina. Os scripts de varredura já
+> usam `WORKERS=$(nproc)` por padrão; use `WORKERS=1` apenas para uma linha de base
+> explícita. Em ambientes com 1 GiB de RAM, mantenha poucos workers e acompanhe
+> `MAX_CONCURRENT_MIB` (o limite é por worker).
 
 ### 4.3. Execução Local
 ```bash
 ./run_local_sweep.sh
-# personalizando:
-SIZE_MIB=8 DWELL_MS=200 VUS_LEVELS="1 2 4 8 16 32" DURATION=20 ./run_local_sweep.sh
+# personalizando (multi-worker + mix de GET/POST):
+SIZE_MIB=8 DWELL_MS=200 VUS_LEVELS="1 2 4 8 16 32" DURATION=20 \
+  WORKERS=8 REQUEST_MIX=mixed SCENARIO=LOCAL REP=1 ./run_local_sweep.sh
 ```
+
+Cada nível recebe um `run_id` único
+(`<perfil>_<cenário>_w<workers>_<mix>_<vus>vus_r<rep>_<UTC>`), gravado no CSV do
+experimento e no CSV do monitor. É esse identificador que o gerador de gráficos
+usa para o join exato entre demanda e recursos.
 
 ### 4.4. Execução via Docker / Docker Compose
 
@@ -130,7 +141,8 @@ com `--include-children`), antes de gerar os gráficos.
 
   Note a coluna de RAM do sistema: 500 MiB a mais representam <2% de 32 GiB e
   praticamente não aparecem — é por isso que o RSS do processo é a métrica de
-  referência.
+  referência. A tabela é histórica (1 worker); as execuções novas usam
+  `WORKERS=$(nproc)` por padrão e medem a árvore de processos inteira.
 
 > **`SIZE_MIB` é mantido em 8 MiB de propósito.** Com `MAX_CONCURRENT_MIB=384`
 > há folga para ~48 buffers simultâneos, então 32 VUs não disparam HTTP 503 e a
@@ -146,8 +158,9 @@ com `--include-children`), antes de gerar os gráficos.
 - **Implicação**: A taxa de requisições por segundo (RPS) depende diretamente do tempo de resposta da aplicação. Se a aplicação degradar, o throughput cai naturalmente.
 - **Execução**:
   ```bash
-  k6 run k6/load_ramp.js -e TARGET_URL=http://127.0.0.1:8000 -e SIZE_MIB=8 -e ITERATIONS=1 -e DWELL_MS=200 -e DWELL_MS=200
+  k6 run k6/load_ramp.js -e TARGET_URL=http://127.0.0.1:8000 -e SIZE_MIB=8 -e ITERATIONS=1 -e DWELL_MS=200
   ```
+  Para variar o tipo de requisição, use `-e REQUEST_MIX=mixed` (alterna GET/POST).
 
 ### 5.2. Modelo Aberto (`k6/load_rate.js`)
 - **Conceito**: Dispara requisições a uma taxa constante ou crescente de chegadas por segundo (`ramping-arrival-rate`), independentemente de quando as requisições anteriores terminam.
@@ -171,6 +184,7 @@ k6 run --out json=data/results/k6_timeline.json k6/load_ramp.js
 O coletor opera com agendamento monotônico (`time.perf_counter()`), garantindo intervalos rigorosamente regulares sem acúmulo de atraso e sem disparo duplo de amostras.
 
 Métricas registradas no CSV:
+- `run_id`, `profile`, `scenario`, `vcpus`, `ram_gib`, `workers`, `request_mix`, `rep`
 - `elapsed_s` e `timestamp_utc` (ISO 8601 UTC explícito)
 - `cpu_percent_total` e `cpu_core_X_percent`
 - `mem_total_mib`, `mem_used_mib`, `mem_available_mib`, `mem_percent`
@@ -195,14 +209,14 @@ Uso:
 
 ## 7. Geração de Gráficos
 
-O script `plots/generate_plots.py` lê os CSVs de experimentos reais e métricas de sistema salvos em `data/results/` e produz 7 gráficos comparativos em `plots/output/`:
-1. `latency_vs_demand.png`: Demanda (VUs) × Latência HTTP (média, p90, p95).
-2. `rps_vs_demand.png`: Demanda (VUs) × Vazão em requisições por segundo (RPS).
-3. `cpu_over_time.png`: CPU em **núcleos equivalentes** (processo + sistema).
-4. `memory_over_time.png`: **RSS do processo (MiB)** como série principal, com a RAM do sistema (%) no eixo secundário.
-5. `proc_resources_over_time.png`: CPU% e RSS do processo alvo ao longo do tempo.
-6. `disk_io_over_time.png`: Leitura/escrita de disco (MiB/s).
-7. `demand_vs_resources.png`: Demanda × CPU (núcleos) / Memória (RSS MiB) / Disco.
+O script `plots/generate_plots.py` lê os CSVs de experimentos reais e métricas de
+sistema salvos em `data/results/` e produz **duas figuras agrupadas** em
+`plots/output/`, com eixos fixos no máximo global de cada métrica:
+
+1. `overview_demand.png`: Demanda (VUs) × latência (média/p90/p95), vazão, CPU
+   (núcleos equivalentes), memória (RSS/%), I/O de disco e eficiência.
+2. `overview_time.png`: CPU/memória do sistema e CPU/RSS do processo ao longo do
+   tempo.
 
 Para gerar:
 ```bash
@@ -243,3 +257,40 @@ Caso o professor autorize alteração dos recursos no VirtualBox:
    VM_IP=192.168.56.10 SCENARIO=C1_1vcpu_1gib SIZE_MIB=8 DWELL_MS=200 bash docs/run_vm_experiments.sh
    ```
    O script dispara a carga via rede externa e aciona a coleta de métricas de infraestrutura dentro da VM via SSH, transferindo os resultados ao final.
+   Por padrão ele deriva `VCPUS`/`RAM_GIB` do nome do cenário e usa
+   `WORKERS=VCPUS` (um worker por vCPU); use `WORKERS=1` para a linha de base.
+
+---
+
+## 9. Validação dos Resultados
+
+```bash
+python3 tools/validate_results.py src/memory-bound/data/results
+```
+
+Verifica `run_id` presente e único em cada experimento novo e a existência de
+exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
+tratados como *legacy* (apenas aviso).
+
+---
+
+> Para a matriz **workers × request_mix × repetições** e os filtros de
+> gráficos, veja [`docs/metodologia/README.md`](../../docs/metodologia/README.md).
+
+## 10. Nuvem (OpenStack/LSD)
+
+O roteiro manual completo está em
+[`docs/cloud/README.md`](../../docs/cloud/README.md). Na arquitetura com as três
+apps na mesma VM, esta aplicação escuta em `127.0.0.1:8001` e é publicada em
+`http://<LB>/memory/` pelo nginx.
+
+```bash
+WORKERS=$(nproc) HOST=127.0.0.1 APP_PORT=8001 \
+APP_DIR=/opt/poi/memory SERVICE_NAME=poi-memory \
+MAX_SIZE_MIB=128 MAX_CONCURRENT_MIB=256 \
+LOG_DIR=/mnt/poi-data/logs DATA_MOUNT=/mnt/poi-data \
+bash docs/deploy_vm.sh
+```
+
+Ajuste `MAX_CONCURRENT_MIB` ao flavor e à convivência com as outras apps. O
+limite é **por worker**; com `WORKERS=N`, o teto agregado é N × o valor.

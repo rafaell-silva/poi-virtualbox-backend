@@ -199,7 +199,7 @@ def info():
     }
 
 
-@app.get("/workload", summary="Carga de trabalho memory-bound com retenção e acesso a buffers")
+@app.api_route("/workload", methods=["GET", "POST"], summary="Carga de trabalho memory-bound com retenção e acesso a buffers")
 def workload(
     response: Response,
     size_mib: int = Query(

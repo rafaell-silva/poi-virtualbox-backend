@@ -26,7 +26,12 @@ IO_DIR="${IO_DIR:-/data/io}"
 DEFAULT_SIZE_MB="${DEFAULT_SIZE_MB:-8}"
 DEFAULT_ITERATIONS="${DEFAULT_ITERATIONS:-1}"
 IO_CHUNK_KB="${IO_CHUNK_KB:-1024}"
-WORKERS="${WORKERS:-1}"
+SERVICE_NAME="${SERVICE_NAME:-poi-io}"
+WORKERS="${WORKERS:-$(nproc 2>/dev/null || echo 1)}" # multi-worker por padrão
+HOST="${HOST:-0.0.0.0}"
+LOG_DIR="${LOG_DIR:-}"                       # ex.: /mnt/poi-data/logs
+DATA_MOUNT="${DATA_MOUNT:-}"                 # ex.: /mnt/poi-data
+PROXY_HEADERS="${PROXY_HEADERS:-1}"          # atrás de nginx/LB
 APP_DIR="${APP_DIR:-/opt/poi-io}"
 VENV_DIR="${APP_DIR}/.venv"
 
@@ -52,25 +57,46 @@ python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip --quiet
 "${VENV_DIR}/bin/pip" install fastapi uvicorn psutil --quiet
 
-echo "=== [deploy] 4. Configurando serviço systemd (poi-io.service) ==="
-sudo tee /etc/systemd/system/poi-io.service > /dev/null << EOF
+LOG_CONFIG=""
+if [ -n "${LOG_DIR}" ]; then
+    sudo mkdir -p "${LOG_DIR}"
+    sudo chown "${USER}:${USER}" "${LOG_DIR}"
+    LOG_CONFIG="StandardOutput=append:${LOG_DIR}/${SERVICE_NAME}.log
+StandardError=append:${LOG_DIR}/${SERVICE_NAME}.log"
+fi
+
+MOUNT_CONFIG=""
+if [ -n "${DATA_MOUNT}" ]; then
+    MOUNT_CONFIG="RequiresMountsFor=${DATA_MOUNT}"
+fi
+
+PROXY_ARGS=""
+if [ "${PROXY_HEADERS}" = "1" ]; then
+    PROXY_ARGS="--proxy-headers --forwarded-allow-ips=127.0.0.1"
+fi
+
+echo "=== [deploy] 4. Configurando serviço systemd (${SERVICE_NAME}.service) ==="
+sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" > /dev/null << EOF
 [Unit]
 Description=POI IO-bound FastAPI Workload
 After=network.target
+${MOUNT_CONFIG}
 
 [Service]
 Type=simple
 User=${USER}
 WorkingDirectory=${APP_DIR}
+Environment="PYTHONUNBUFFERED=1"
 Environment="IO_DIR=${IO_DIR}"
 Environment="DEFAULT_SIZE_MB=${DEFAULT_SIZE_MB}"
 Environment="DEFAULT_ITERATIONS=${DEFAULT_ITERATIONS}"
 Environment="IO_CHUNK_KB=${IO_CHUNK_KB}"
 ExecStart=${VENV_DIR}/bin/uvicorn app.main:app \
-    --host 0.0.0.0 \
+    --host ${HOST} \
     --port ${APP_PORT} \
     --workers ${WORKERS} \
-    --log-level info
+    --log-level info ${PROXY_ARGS}
+${LOG_CONFIG}
 Restart=on-failure
 RestartSec=3
 
@@ -79,8 +105,8 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable poi-io
-sudo systemctl restart poi-io
+sudo systemctl enable "${SERVICE_NAME}"
+sudo systemctl restart "${SERVICE_NAME}"
 
 echo ""
 echo "=== [deploy] 5. Validando disponibilidade do serviço ==="
@@ -88,10 +114,10 @@ sleep 2
 if curl -sf "http://127.0.0.1:${APP_PORT}/health" > /dev/null; then
     echo "OK: aplicação respondendo em http://127.0.0.1:${APP_PORT} (IO_DIR=${IO_DIR})"
 else
-    echo "FALHA: verifique logs: sudo journalctl -u poi-io -n 40"
+    echo "FALHA: verifique logs: sudo journalctl -u ${SERVICE_NAME} -n 40"
     exit 1
 fi
 
 echo ""
 echo "Status do serviço:"
-sudo systemctl status poi-io --no-pager
+sudo systemctl status "${SERVICE_NAME}" --no-pager

@@ -1,11 +1,13 @@
-version: '3.8'
 services:
-  app:
+  poi-memory:
+    image: rafaellsb/poi-memory-bound:latest
     build: ./app
+    container_name: poi-memory
+    hostname: poi-memory-container
     ports:
-      - "8000:8000"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 256M
+      - "8001:8000"
+    environment:
+      - WORKERS=${WORKERS:-1}
+      - MAX_CONCURRENT_MIB=512
+    restart: unless-stopped
+

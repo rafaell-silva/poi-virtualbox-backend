@@ -11,7 +11,7 @@ nuvem, Kubernetes ou EKS.
 
 ## 1. Perfil Computacional
 
-A aplicação é IO-bound por construção (`app/main.py`, endpoint `GET /process`):
+A aplicação é IO-bound por construção (`app/main.py`, endpoint `GET|POST /process`):
 
 1. Escreve `size_mb` MiB em disco, em blocos de `chunk_kb` KiB (`os.write`).
 2. Chama **`os.fsync()`** para forçar a descarga física do *page cache* para o
@@ -46,6 +46,7 @@ io-bound/
 │       ├── system_monitor.py    # Monitor de SO (CPU/RAM/Swap/Disco + processo)
 │       └── run_experiment.py    # Executor integrado de experimentos locais
 ├── data/results/                # CSVs brutos coletados nos testes
+├── tests/                       # Testes de fumaça da API (pytest)
 ├── plots/
 │   ├── generate_plots.py        # Gerador de gráficos comparativos
 │   └── output/                  # PNGs gerados a partir das medições reais
@@ -85,9 +86,11 @@ pip install -r requirements.txt
 
 ### 3.2. Iniciar a aplicação
 
-- **Linux / Git Bash:** `IO_DIR=/tmp/io_test uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
-- **PowerShell:** `$env:IO_DIR="C:\temp\io_test"; uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- **Linux / Git Bash:** `IO_DIR=/tmp/io_test uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
+- **PowerShell:** `$env:IO_DIR="C:\temp\io_test"; uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4`
 > Para experimentos reais, aponte `IO_DIR` para um volume de disco (não tmpfs).
+> Ajuste `--workers` ao número de núcleos; os scripts de varredura usam
+> `WORKERS=$(nproc)` por padrão.
 
 ### 3.3. Teste rápido
 ```bash
@@ -98,9 +101,14 @@ curl "http://127.0.0.1:8000/process?size_mb=8&iterations=1"
 ### 3.4. Varredura local completa
 ```bash
 ./run_local_sweep.sh
-# personalizando:
-SIZE_MIB=8 ITERATIONS=1 VUS_LEVELS="1 2 4 8" DURATION=20 IO_DIR=/data/io ./run_local_sweep.sh
+# personalizando (multi-worker + mix de GET/POST):
+SIZE_MIB=8 ITERATIONS=1 VUS_LEVELS="1 2 4 8" DURATION=20 IO_DIR=/data/io \
+  WORKERS=8 REQUEST_MIX=mixed SCENARIO=LOCAL REP=1 ./run_local_sweep.sh
 ```
+
+Cada nível recebe um `run_id`
+(`<perfil>_<cenário>_w<workers>_<mix>_<vus>vus_r<rep>_<UTC>`), gravado no CSV do
+experimento e no CSV do monitor para o join exato usado nos gráficos.
 
 ### 3.5. Execução via Docker / Docker Compose
 
@@ -128,8 +136,10 @@ k6 run k6/load_ramp.js -e TARGET_URL=http://192.168.56.10:8000 -e SIZE_MIB=8
 ```
 
 Parâmetros: `TARGET_URL`, `SIZE_MIB`, `ITERATIONS`, `OUT_DIR` (e `MAX_RATE` no
-`load_rate.js`). O k6 grava `data/results/k6_*.csv` com latência (HTTP e fases
-internas: escrita, fsync, leitura), RPS e erros.
+`load_rate.js`), além de `REQUEST_MIX`, `RUN_ID`, `SCENARIO`, `VCPUS`, `RAM_GIB`,
+`WORKERS` e `REP`. `REQUEST_MIX=mixed` alterna GET/POST; `uniform` mantém só GET.
+O k6 grava `data/results/k6_*.csv` com latência (HTTP e fases internas: escrita,
+fsync, leitura), RPS, erros e os metadados de execução.
 
 ---
 
@@ -137,6 +147,7 @@ internas: escrita, fsync, leitura), RPS e erros.
 
 Além de CPU/RAM/Swap, o monitor coleta **I/O de disco**, essencial para o perfil:
 
+- `run_id`, `profile`, `scenario`, `vcpus`, `ram_gib`, `workers`, `request_mix`, `rep`
 - `disk_read_mib_s`, `disk_write_mib_s` — taxas de leitura/escrita
 - `disk_read_iops`, `disk_write_iops` — operações por segundo
 - `disk_busy_percent` — percentual de tempo com o dispositivo ocupado
@@ -151,13 +162,13 @@ Além de CPU/RAM/Swap, o monitor coleta **I/O de disco**, essencial para o perfi
 
 ## 6. Gráficos (`plots/generate_plots.py`)
 
-1. `latency_vs_demand.png` — Demanda × Latência (avg/p90/p95)
-2. `rps_vs_demand.png` — Demanda × Vazão (RPS)
-3. `cpu_over_time.png` — CPU (%) ao longo do tempo
-4. `memory_over_time.png` — Memória (%) ao longo do tempo
-5. `proc_resources_over_time.png` — CPU% e RSS do processo alvo
-6. `disk_io_over_time.png` — **Leitura/escrita de disco (MiB/s)**
-7. `demand_vs_resources.png` — Demanda × CPU / Memória / **Disco**
+O gerador produz **duas figuras agrupadas** em `plots/output/`, com eixos fixos
+no máximo global de cada métrica:
+
+1. `overview_demand.png` — Demanda × latência, vazão, CPU, memória, **I/O de
+   disco** e duração de escrita/fsync do app.
+2. `overview_time.png` — CPU/memória do sistema e CPU/RSS do processo ao longo
+   do tempo.
 
 ```bash
 .venv/bin/python plots/generate_plots.py --results-dir data/results --out-dir plots/output
@@ -188,3 +199,41 @@ Além de CPU/RAM/Swap, o monitor coleta **I/O de disco**, essencial para o perfi
 
 A carga é gerada **de fora da VM** (k6) e as métricas de infraestrutura são
 coletadas **dentro** da VM via SSH.
+
+O script deriva `VCPUS`/`RAM_GIB` do nome do cenário e usa `WORKERS=VCPUS` por
+padrão (um worker por vCPU); use `WORKERS=1` para a linha de base.
+
+---
+
+## 8. Validação dos Resultados
+
+```bash
+python3 tools/validate_results.py src/io-bound/data/results
+```
+
+Verifica `run_id` presente e único em cada experimento novo e a existência de
+exatamente um `sys_*.csv` com o mesmo `run_id`. CSVs antigos sem `run_id` são
+tratados como *legacy* (apenas aviso).
+
+---
+
+> Para a matriz **workers × request_mix × repetições** e os filtros de
+> gráficos, veja [`docs/metodologia/README.md`](../../docs/metodologia/README.md).
+
+## 9. Nuvem (OpenStack/LSD)
+
+O roteiro manual completo está em
+[`docs/cloud/README.md`](../../docs/cloud/README.md). Na arquitetura com as três
+apps na mesma VM, esta aplicação escuta em `127.0.0.1:8002` e é publicada em
+`http://<LB>/io/` pelo nginx.
+
+```bash
+WORKERS=$(nproc) HOST=127.0.0.1 APP_PORT=8002 \
+APP_DIR=/opt/poi/io SERVICE_NAME=poi-io \
+IO_DIR=/mnt/poi-data/io \
+LOG_DIR=/mnt/poi-data/logs DATA_MOUNT=/mnt/poi-data \
+bash docs/deploy_vm.sh
+```
+
+O `IO_DIR` aponta para o volume OpenStack (disco real), não para tmpfs. O
+`LOG_DIR` mantém os logs no volume.

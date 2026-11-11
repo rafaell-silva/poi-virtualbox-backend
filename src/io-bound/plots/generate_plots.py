@@ -2,14 +2,10 @@
 """
 Gerador de gráficos a partir dos dados coletados.
 
-Lê os CSVs em data/results/ e produz:
-  1. Demanda (VUs/RPS) × Latência (avg, p90, p95)
-  2. Demanda × Requisições por segundo
-  3. Utilização de CPU ao longo do tempo (tempo real decorrido)
-  4. Consumo de memória ao longo do tempo (tempo real decorrido)
-  5. Recursos do processo alvo ao longo do tempo (CPU% e RSS MiB)
-  6. I/O de disco ao longo do tempo (leitura/escrita MiB/s)
-  7. Demanda × CPU/Memória média
+Lê os CSVs em data/results/ e produz duas figuras agrupadas:
+  1. overview_demand.png — demanda × latência, vazão, CPU, memória,
+     I/O e eficiência (eixos fixos por métrica);
+  2. overview_time.png — CPU/memória do sistema e do processo ao longo do tempo.
 
 Os gráficos "ao longo do tempo" combinam todas as amostras em uma única série
 ordenada pelo instante real de coleta (timestamp_utc), de modo que os níveis de
@@ -18,6 +14,12 @@ demanda apareçam distribuídos ao longo do eixo, na ordem em que ocorreram.
 Uso:
     python plots/generate_plots.py
     python plots/generate_plots.py --results-dir data/results --out-dir plots/output
+
+    # listar run_ids e metadados disponíveis (não gera gráficos):
+    python plots/generate_plots.py --list-runs
+
+    # selecionar uma configuração e ignorar CSVs legacy:
+    python plots/generate_plots.py --exclude-legacy --workers 8 --request-mix mixed
 
 IMPORTANTE:
     Os gráficos são gerados a partir de medições reais.  Se não houver dados
@@ -40,6 +42,13 @@ def parse_args():
     p.add_argument("--results-dir", default="data/results")
     p.add_argument("--out-dir", default="plots/output")
     p.add_argument("--show", action="store_true", help="Exibir gráficos na tela.")
+    p.add_argument("--scenario", default="", help="Filtra por cenário (lista separada por vírgula).")
+    p.add_argument("--workers", default="", help="Filtra por nº de workers (lista separada por vírgula).")
+    p.add_argument("--request-mix", default="", help="Filtra por mix: uniform,mixed (lista separada por vírgula).")
+    p.add_argument("--rep", default="", help="Filtra por repetição (lista separada por vírgula).")
+    p.add_argument("--run-id", default="", help="Filtra por run_id exato (lista separada por vírgula).")
+    p.add_argument("--exclude-legacy", action="store_true", help="Ignora CSVs sem run_id (legacy).")
+    p.add_argument("--list-runs", action="store_true", help="Lista run_ids/metadados e não gera gráficos.")
     return p.parse_args()
 
 
@@ -70,7 +79,7 @@ def read_sys_csv(path: str) -> list[dict]:
 def load_all_experiments(results_dir: str):
     """
     Carrega todos os arquivos de experimento (exp_*.csv e k6_*.csv) e
-    sys_*.csv correlacionados pelo label/timestamp.
+    sys_*.csv correlacionados pelo run_id (label/timestamp só para CSVs legacy).
     """
     exp_files = sorted(glob.glob(os.path.join(results_dir, "exp_*.csv")))
     k6_files = sorted(glob.glob(os.path.join(results_dir, "k6_*.csv")))
@@ -96,6 +105,126 @@ def load_all_experiments(results_dir: str):
     return experiments, sys_data
 
 
+def _split_filter(value: str) -> set:
+    return {v.strip() for v in (value or "").split(",") if v.strip()}
+
+
+def _exp_value(exp: dict, key: str) -> str:
+    return (exp.get(key) or "").strip()
+
+
+def _meta_matches(record: dict, scenarios: set, workers: set, mixes: set,
+                  reps: set, run_ids: set) -> bool:
+    run_id = (record.get("run_id") or "").strip()
+    if not run_id:
+        return False
+    if scenarios and (record.get("scenario") or "").strip() not in scenarios:
+        return False
+    if workers and (record.get("workers") or "").strip() not in workers:
+        return False
+    if mixes and (record.get("request_mix") or "").strip() not in mixes:
+        return False
+    if reps and (record.get("rep") or "").strip() not in reps:
+        return False
+    if run_ids and run_id not in run_ids:
+        return False
+    return True
+
+
+def _sys_meta_row(rows: list):
+    for row in rows:
+        if (row.get("run_id") or "").strip():
+            return row
+    return None
+
+
+def filter_experiments(experiments: list, scenario: str = "", workers: str = "",
+                       request_mix: str = "", rep: str = "", run_id: str = "",
+                       exclude_legacy: bool = False) -> list:
+    """
+    Filtra experimentos pelos metadados gravados no CSV.
+
+    CSVs legacy (sem run_id) só entram quando nenhum filtro é pedido e
+    --exclude-legacy não foi usado. Ao comparar workers/mix/reps, os dados
+    antigos não contaminam a figura.
+    """
+    scenarios = _split_filter(scenario)
+    worker_set = _split_filter(workers)
+    mixes = _split_filter(request_mix)
+    reps = _split_filter(rep)
+    run_ids = _split_filter(run_id)
+    any_filter = bool(scenarios or worker_set or mixes or reps or run_ids)
+
+    selected = []
+    for exp in experiments:
+        if not _exp_value(exp, "run_id"):
+            if not exclude_legacy and not any_filter:
+                selected.append(exp)
+            continue
+        if _meta_matches(exp, scenarios, worker_set, mixes, reps, run_ids):
+            selected.append(exp)
+    return selected
+
+
+def filter_sys_data(sys_data: dict, scenario: str = "", workers: str = "",
+                    request_mix: str = "", rep: str = "", run_id: str = "",
+                    exclude_legacy: bool = False) -> dict:
+    """Filtra os CSVs de sistema com os mesmos critérios dos experimentos."""
+    scenarios = _split_filter(scenario)
+    worker_set = _split_filter(workers)
+    mixes = _split_filter(request_mix)
+    reps = _split_filter(rep)
+    run_ids = _split_filter(run_id)
+    any_filter = bool(scenarios or worker_set or mixes or reps or run_ids)
+
+    if not any_filter and not exclude_legacy:
+        return sys_data
+
+    selected = {}
+    for path, rows in sys_data.items():
+        meta = _sys_meta_row(rows)
+        if meta is None:
+            continue
+        if _meta_matches(meta, scenarios, worker_set, mixes, reps, run_ids):
+            selected[path] = rows
+    return selected
+
+
+def describe_filters(args) -> str:
+    parts = []
+    if args.scenario:
+        parts.append(f"scenario={args.scenario}")
+    if args.workers:
+        parts.append(f"workers={args.workers}")
+    if args.request_mix:
+        parts.append(f"request_mix={args.request_mix}")
+    if args.rep:
+        parts.append(f"rep={args.rep}")
+    if args.run_id:
+        parts.append(f"run_id={args.run_id}")
+    if args.exclude_legacy:
+        parts.append("exclude_legacy")
+    return ", ".join(parts) if parts else "nenhum"
+
+
+def list_runs(experiments: list):
+    """Imprime run_ids e metadados para o usuário montar os filtros."""
+    print("run_id\tscenario\tworkers\trequest_mix\trep\tvus\tarquivo")
+    for exp in sorted(experiments, key=lambda e: e.get("_source_file", "")):
+        run_id = _exp_value(exp, "run_id") or "(legacy)"
+        print(
+            "\t".join([
+                run_id,
+                _exp_value(exp, "scenario") or "-",
+                _exp_value(exp, "workers") or "-",
+                _exp_value(exp, "request_mix") or "-",
+                _exp_value(exp, "rep") or "-",
+                _exp_value(exp, "vus") or _exp_value(exp, "vus_max") or "-",
+                exp.get("_source_file", ""),
+            ])
+        )
+
+
 def float_or_none(v):
     try:
         if v is None or v == "":
@@ -115,24 +244,72 @@ def parse_iso_ts(v):
         return None
 
 
-def classify_sys_files(experiments: list, sys_series: dict):
+def _experiment_run_id(exp: dict):
+    """run_id do experimento; None em CSVs legacy (anteriores ao run_id)."""
+    value = (exp.get("run_id") or "").strip()
+    return value or None
+
+
+def _sys_file_run_id(rows: list):
+    """run_id declarado em um CSV de sistema (primeira linha que o tiver)."""
+    for row in rows:
+        value = (row.get("run_id") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def build_sys_run_index(sys_data: dict):
+    """
+    Indexa run_id → arquivo sys_* para join exato com o experimento.
+
+    Esse é o caminho preferencial: o run_id é gerado uma única vez pelo
+    orquestrador e gravado tanto no resumo (exp_*/k6_*) quanto no CSV de
+    sistema. CSVs legacy (sem a coluna run_id) ficam fora do índice e
+    continuam usando a heurística antiga de nome/timestamp/VUs.
+    """
+    index = {}
+    for path, rows in sys_data.items():
+        run_id = _sys_file_run_id(rows)
+        if not run_id:
+            continue
+        current = index.get(run_id)
+        if current is None or len(rows) > len(sys_data[current]):
+            if current is not None:
+                print(
+                    f"[plots][aviso] run_id '{run_id}' repetido em sys_*; "
+                    f"usando {os.path.basename(path)}"
+                )
+            index[run_id] = path
+    return index
+
+
+def classify_sys_files(experiments: list, sys_series: dict, sys_data: dict = None):
     """
     Separa os arquivos sys_* em:
       - level_files: correspondem a um experimento (rodada por nível de demanda);
       - monitor_files: coletas contínuas (sem experimento associado).
 
-    A correspondência usa o mesmo critério de _match_sys_file: o nome-base do
-    experimento (sem prefixo exp_/k6_) deve estar contido no nome do arquivo sys_.
+    Com run_id disponível, a classificação é exata. Para CSVs legacy, cai na
+    heurística antiga: o nome-base do experimento (sem prefixo exp_/k6_) deve
+    estar contido no nome do arquivo sys_.
     """
-    cores = set()
+    level_run_ids = {rid for e in experiments if (rid := _experiment_run_id(e))}
+    legacy_cores = set()
     for e in experiments:
         src = e.get("_source_file", "")
         if src:
-            cores.add(Path(src).stem.replace("exp_", "").replace("k6_", ""))
+            legacy_cores.add(Path(src).stem.replace("exp_", "").replace("k6_", ""))
+
     level_files, monitor_files = [], []
     for p in sys_series:
-        stem = Path(p).stem
-        (level_files if any(c and c in stem for c in cores) else monitor_files).append(p)
+        run_id = _sys_file_run_id(sys_data.get(p, [])) if sys_data else None
+        if run_id:
+            is_level = run_id in level_run_ids
+        else:
+            stem = Path(p).stem
+            is_level = any(c and c in stem for c in legacy_cores)
+        (level_files if is_level else monitor_files).append(p)
     return level_files, monitor_files
 
 
@@ -173,11 +350,19 @@ def combine_on_timeline(sys_series: dict, key: str):
     return xs, ys
 
 
-def _match_sys_file(exp: dict, sys_data: dict):
+def _match_sys_file(exp: dict, sys_data: dict, sys_run_index: dict = None):
     """
-    Encontra o arquivo sys_* cujo nome de arquivo contenha o rótulo do experimento
-    (sem os prefixos exp_/k6_) e o mesmo timestamp. Prefere a correspondência exata.
+    Encontra o arquivo sys_* correspondente ao experimento exp_*/k6_*.
+
+    Caminho preferencial: match exato pelo run_id (gerado pelo orquestrador e
+    presente nos dois CSVs). Fallbacks para dados legacy: substring de
+    nome/timestamp e, por último, quantidade de VUs.
     """
+    if sys_run_index:
+        run_id = _experiment_run_id(exp)
+        if run_id and run_id in sys_run_index:
+            return sys_run_index[run_id]
+
     label = exp.get("_source_file", "")
     if not label:
         return None
@@ -494,7 +679,7 @@ def plot_disk(sys_series: dict, out_dir: str, show: bool):
     plt.close(fig)
 
 
-def _demand_resource_points(experiments: list, sys_data: dict):
+def _demand_resource_points(experiments: list, sys_data: dict, sys_run_index: dict = None):
     """
     Correlaciona cada experimento com o arquivo sys_* correspondente e extrai
     as médias de CPU (processo, se houver; senão do sistema) e de memória
@@ -505,7 +690,7 @@ def _demand_resource_points(experiments: list, sys_data: dict):
         demand = float_or_none(e.get("vus") or e.get("vus_max"))
         if demand is None:
             continue
-        matched = _match_sys_file(e, sys_data)
+        matched = _match_sys_file(e, sys_data, sys_run_index)
         if not matched:
             continue
         rows = sys_data[matched]
@@ -524,14 +709,15 @@ def _demand_resource_points(experiments: list, sys_data: dict):
     return sorted(points, key=lambda p: p["demand"])
 
 
-def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, show: bool):
+def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, show: bool,
+                             sys_run_index: dict = None):
     """
     Gera painéis Demanda × CPU, Demanda × Memória e, quando disponível,
     Demanda × I/O de disco. Requer ao menos 2 pontos para produzir o gráfico.
     """
     import matplotlib.pyplot as plt
 
-    points = _demand_resource_points(experiments, sys_data)
+    points = _demand_resource_points(experiments, sys_data, sys_run_index)
     if len(points) < 2:
         print("[plots] Dados insuficientes para gráfico Demanda×Recursos (precisa ≥2 experimentos).")
         return
@@ -587,6 +773,183 @@ def plot_demand_vs_resources(experiments: list, sys_data: dict, out_dir: str, sh
 # Main
 # --------------------------------------------------------------------------- #
 
+def _finite(values):
+    """Remove None/NaN/Inf para calcular limites de eixo sem quebrar o matplotlib."""
+    return [v for v in values if v is not None and math.isfinite(v)]
+
+
+def plot_overview(experiments, sys_data, out_dir, show, sys_run_index=None):
+    """
+    Figura única com os painéis relevantes do perfil I/O: latência, vazão,
+    CPU, memória, I/O de disco e duração de escrita/fsync em função da demanda.
+
+    Os eixos são fixados no máximo global de cada métrica para permitir
+    comparação visual entre níveis e execuções.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    lat = extract_latency_series(experiments)
+    rps = extract_rps_series(experiments)
+    res = _demand_resource_points(experiments, sys_data, sys_run_index)
+
+    demands = _finite(
+        [p[0] for p in lat] + [p[0] for p in rps] + [p["demand"] for p in res]
+    )
+    if not demands:
+        print("[plots] Sem dados para a visão geral demanda × recursos.")
+        return
+    xmax = max(max(demands) * 1.10, 1.0)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+    ax_lat, ax_rps, ax_cpu, ax_mem, ax_io, ax_app = axes.ravel()
+
+    if lat:
+        ax_lat.plot([p[0] for p in lat], [p[1] for p in lat], "o-", label="média")
+        ax_lat.plot([p[0] for p in lat], [p[2] for p in lat], "s--", label="p90")
+        ax_lat.plot([p[0] for p in lat], [p[3] for p in lat], "^-", label="p95")
+        ymax = max(_finite([p[1] for p in lat] + [p[2] for p in lat] + [p[3] for p in lat]))
+        ax_lat.set_ylim(0, max(ymax * 1.15, 1.0))
+        ax_lat.legend(fontsize=8)
+    ax_lat.set_title("Latência × Demanda")
+    ax_lat.set_ylabel("ms")
+
+    if rps:
+        ax_rps.plot([p[0] for p in rps], [p[1] for p in rps], "o-", color="tab:green")
+        ax_rps.set_ylim(0, max(max(_finite([p[1] for p in rps])) * 1.15, 1.0))
+    ax_rps.set_title("Vazão × Demanda")
+    ax_rps.set_ylabel("req/s")
+
+    cpu_vals = _finite([p["cpu"] for p in res])
+    if cpu_vals:
+        ax_cpu.plot([p["demand"] for p in res], [p["cpu"] for p in res], "o-", color="tab:red")
+        ax_cpu.set_ylim(0, max(max(cpu_vals) * 1.15, 1.0))
+    ax_cpu.set_title("CPU × Demanda")
+    ax_cpu.set_ylabel("% de CPU")
+
+    if res and all(p["mem"] is not None for p in res):
+        mem_vals = [p["mem"] for p in res]
+        mem_label = "RSS do processo (MiB)"
+    elif res and all(p["mem_pct"] is not None for p in res):
+        mem_vals = [p["mem_pct"] for p in res]
+        mem_label = "Memória do sistema (%)"
+    else:
+        mem_vals = []
+        mem_label = "Memória"
+    if mem_vals:
+        ax_mem.plot([p["demand"] for p in res], mem_vals, "o-", color="tab:purple")
+        ax_mem.set_ylim(0, max(max(_finite(mem_vals)) * 1.15, 1.0))
+    ax_mem.set_title("Memória × Demanda")
+    ax_mem.set_ylabel(mem_label)
+
+    if res:
+        dw = [p["disk_write"] for p in res]
+        dr = [p["disk_read"] for p in res]
+        if any(v is not None for v in dw):
+            ax_io.plot([p["demand"] for p in res],
+                       [v if v is not None else float("nan") for v in dw],
+                       "o-", label="escrita")
+        if any(v is not None for v in dr):
+            ax_io.plot([p["demand"] for p in res],
+                       [v if v is not None else float("nan") for v in dr],
+                       "s--", label="leitura")
+        io_vals = _finite(dw + dr)
+        if io_vals:
+            ax_io.set_ylim(0, max(max(io_vals) * 1.15, 1.0))
+        if any(v is not None for v in dw + dr):
+            ax_io.legend(fontsize=8)
+    ax_io.set_title("I/O de disco × Demanda")
+    ax_io.set_ylabel("MiB/s")
+
+    # Duração do trabalho de I/O reportada pela própria aplicação/k6.
+    app = []
+    for e in experiments:
+        d = float_or_none(e.get("vus") or e.get("vus_max"))
+        w = float_or_none(e.get("app_write_duration_avg_ms"))
+        f = float_or_none(e.get("app_fsync_duration_avg_ms"))
+        if d is not None and (w is not None or f is not None):
+            app.append((d, w, f))
+    app.sort(key=lambda x: x[0])
+    if app:
+        if any(p[1] is not None for p in app):
+            ax_app.plot([p[0] for p in app],
+                        [p[1] if p[1] is not None else float("nan") for p in app],
+                        "o-", label="escrita")
+        if any(p[2] is not None for p in app):
+            ax_app.plot([p[0] for p in app],
+                        [p[2] if p[2] is not None else float("nan") for p in app],
+                        "s--", label="fsync")
+        app_vals = _finite([p[1] for p in app] + [p[2] for p in app])
+        if app_vals:
+            ax_app.set_ylim(0, max(max(app_vals) * 1.15, 1.0))
+        ax_app.legend(fontsize=8)
+    ax_app.set_title("Trabalho de I/O do app × Demanda")
+    ax_app.set_ylabel("ms")
+
+    for ax in axes.ravel():
+        ax.set_xlim(0, xmax)
+        ax.grid(alpha=0.3)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    for ax in axes[-1]:
+        ax.set_xlabel("VUs (demanda)")
+
+    fig.suptitle("Visão geral: demanda × latência, vazão e I/O", fontsize=13)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "overview_demand.png")
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    print(f"[plots] → {path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_overview_time(sys_series, out_dir, show):
+    """Figura única com CPU/memória do sistema e do processo ao longo do tempo."""
+    import matplotlib.pyplot as plt
+
+    if not sys_series:
+        print("[plots] Sem séries temporais para a visão geral.")
+        return
+
+    specs = [
+        ("cpu", "CPU total do sistema", "%"),
+        ("mem", "Memória do sistema", "%"),
+        ("proc_cpu", "CPU do processo", "%"),
+        ("proc_rss", "RSS do processo", "MiB"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
+    any_data = False
+    xmax = 0.0
+    for ax, (key, title, unit) in zip(axes.ravel(), specs):
+        xs, ys = combine_on_timeline(sys_series, key)
+        if xs:
+            any_data = True
+            xmax = max(xmax, max(xs))
+            ax.plot(xs, [v if v is not None else float("nan") for v in ys], lw=1.2)
+            vals = _finite(ys)
+            if vals:
+                ax.set_ylim(0, max(max(vals) * 1.15, 1.0))
+        ax.set_title(title)
+        ax.set_ylabel(unit)
+        ax.grid(alpha=0.3)
+    if not any_data:
+        plt.close(fig)
+        print("[plots] Sem amostras temporais para a visão geral.")
+        return
+    for ax in axes[-1]:
+        ax.set_xlabel("tempo desde a primeira amostra (s)")
+    for ax in axes.ravel():
+        ax.set_xlim(0, max(xmax * 1.02, 1.0))
+    fig.suptitle("Visão geral: recursos ao longo do tempo", fontsize=13)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "overview_time.png")
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    print(f"[plots] → {path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def resolve_default_dirs(results_dir: str, out_dir: str):
     """
     Se os diretórios padrão data/results ou plots/output não existirem ou estiverem vazios,
@@ -616,7 +979,42 @@ def main():
 
     experiments, sys_data = load_all_experiments(results_dir)
 
+    if args.list_runs:
+        list_runs(experiments)
+        return
+
+    experiments = filter_experiments(
+        experiments,
+        scenario=args.scenario,
+        workers=args.workers,
+        request_mix=args.request_mix,
+        rep=args.rep,
+        run_id=args.run_id,
+        exclude_legacy=args.exclude_legacy,
+    )
+    sys_data = filter_sys_data(
+        sys_data,
+        scenario=args.scenario,
+        workers=args.workers,
+        request_mix=args.request_mix,
+        rep=args.rep,
+        run_id=args.run_id,
+        exclude_legacy=args.exclude_legacy,
+    )
+
+    if describe_filters(args) != "nenhum":
+        print(
+            f"[plots] Filtros: {describe_filters(args)} | "
+            f"{len(experiments)} experimento(s), {len(sys_data)} sistema(s)."
+        )
+
     if not experiments and not sys_data:
+        if describe_filters(args) != "nenhum":
+            print(
+                f"[plots] Nenhum dado corresponde aos filtros "
+                f"({describe_filters(args)}) em '{args.results_dir}'."
+            )
+            sys.exit(0)
         print(
             f"[plots] Nenhum dado encontrado em '{results_dir}'.\n"
             "        Execute primeiro os experimentos com:\n"
@@ -636,25 +1034,21 @@ def main():
     # Para os gráficos "ao longo do tempo", dá-se preferência aos arquivos por
     # nível de demanda (correlacionados a um experimento). Se não houver, usa-se
     # tudo. As amostras são unidas no tempo real de coleta (ver combine_on_timeline).
-    level_paths, monitor_paths = classify_sys_files(experiments, sys_series)
+    # Índice run_id -> sys_* para join exato (legacy cai na heurística antiga).
+    sys_run_index = build_sys_run_index(sys_data)
+    level_paths, monitor_paths = classify_sys_files(experiments, sys_series, sys_data)
     res_paths = level_paths if level_paths else list(sys_series)
     proc_paths = monitor_paths if monitor_paths else list(sys_series)
     res_series = {p: sys_series[p] for p in res_paths}
     proc_series = {p: sys_series[p] for p in proc_paths}
 
-    plot_latency(lat_points, out_dir, args.show)
-    plot_rps(rps_points, out_dir, args.show)
-    _plot_over_time(res_series, out_dir, args.show,
-                    key="cpu", ylabel="CPU total (%)",
-                    title="Utilização de CPU ao longo do tempo",
-                    filename="cpu_over_time.png", ylim=(0, 105))
-    _plot_over_time(res_series, out_dir, args.show,
-                    key="mem", ylabel="Memória usada (%)",
-                    title="Consumo de memória ao longo do tempo",
-                    filename="memory_over_time.png", ylim=(0, 105))
-    plot_proc_resources(proc_series, out_dir, args.show)
-    plot_disk(res_series, out_dir, args.show)
-    plot_demand_vs_resources(experiments, sys_data, out_dir, args.show)
+    # Série temporal agrupada: níveis + monitor contínuo como complemento.
+    time_series = dict(res_series)
+    for p, s in proc_series.items():
+        time_series.setdefault(p, s)
+
+    plot_overview(experiments, sys_data, out_dir, args.show, sys_run_index)
+    plot_overview_time(time_series, out_dir, args.show)
 
     print(f"\n[plots] Concluído. Arquivos em '{out_dir}/'.")
 

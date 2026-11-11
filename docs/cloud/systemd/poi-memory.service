@@ -1,0 +1,36 @@
+# /etc/systemd/system/poi-memory.service
+# Template para a VM da nuvem (Ubuntu 24.04). Ajuste os limites de memória
+# conforme o flavor e a convivência com as outras duas aplicações.
+
+[Unit]
+Description=POI Memory-bound FastAPI Workload
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/poi-data
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/poi/memory
+Environment=PYTHONUNBUFFERED=1
+Environment=WORKERS=2
+Environment=MAX_SIZE_MIB=128
+Environment=MAX_CONCURRENT_MIB=256
+Environment=DEFAULT_SIZE_MIB=8
+Environment=DEFAULT_ITERATIONS=1
+EnvironmentFile=-/etc/poi/cloud.env
+ExecStart=/opt/poi/memory/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --workers ${WORKERS} \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1 \
+    --log-level info
+StandardOutput=append:/mnt/poi-data/logs/poi-memory.log
+StandardError=append:/mnt/poi-data/logs/poi-memory.log
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Dependências de desenvolvimento/teste (não usadas em produção).
+# Instale em um venv separado do runtime de cada projeto:
+#   python3 -m venv .venv-dev && source .venv-dev/bin/activate
+#   pip install -r requirements-dev.txt
+pytest>=8.0.0
+httpx>=0.27.0

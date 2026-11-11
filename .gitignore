@@ -1,9 +1,21 @@
 .venv/
+.venv-dev/
 __pycache__/
 *.pyc
 *.pyo
 *.log
 .env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Credenciais e chaves de nuvem (OpenStack)
+openrc
+*openrc
+clouds.yaml
+*.pem
+*.key
+docs/cloud/evidence/
 
 # Resultados de benchmarks e experimentos
 data/results/
