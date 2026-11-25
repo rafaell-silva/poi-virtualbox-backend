@@ -23,7 +23,9 @@ Três aplicações web (apenas backend, Python/FastAPI) com perfis computacionai
 ├── docs/
 │   ├── atividade.md                                   # enunciado da atividade
 │   ├── virtualbox-tutorial.pdf                        # tutorial de uso da VM
-│   └── cloud/                                         # runbook OpenStack + nginx/systemd
+│   ├── cloud/                                         # runbook OpenStack + nginx/systemd
+│   └── kubernetes/                                    # runbook Kubernetes/Minikube (Atividade 5)
+├── k8s/                                               # manifestos K8s, template nginx e scripts
 └── src/
     ├── cpu-bound/      ┐
     ├── memory-bound/   ├ cada projeto tem: app/ k6/ metrics/collectors/ plots/
@@ -240,6 +242,21 @@ docker push rafaellsb/poi-io-bound:latest
 docker compose -f /opt/poi-docker/docker-compose.yml up -d
 docker compose -f /opt/poi-docker/docker-compose.yml ps
 ```
+
+## Orquestração com Kubernetes e Minikube (Atividade 5)
+
+O roteiro completo de provisionamento na nuvem OpenStack/LSD, instalação do Minikube, deploy das três aplicações e exposição via Load Balancer está em [`docs/kubernetes/README.md`](docs/kubernetes/README.md).
+
+| Aplicação | Workload | Manifesto de configuração | Manifesto de exposição | NodePort | Imagem no Docker Hub |
+|---|---|---|---|---|---|
+| CPU-bound | `Deployment` (2 réplicas) | [`k8s/cpu-bound/deployment.yaml`](k8s/cpu-bound/deployment.yaml) | [`k8s/cpu-bound/service.yaml`](k8s/cpu-bound/service.yaml) | `30080` | `rafaellsb/poi-cpu-bound:latest` |
+| Memory-bound | `Deployment` (2 réplicas) | [`k8s/memory-bound/deployment.yaml`](k8s/memory-bound/deployment.yaml) | [`k8s/memory-bound/service.yaml`](k8s/memory-bound/service.yaml) | `30081` | `rafaellsb/poi-memory-bound:latest` |
+| IO-bound | `StatefulSet` (1 réplica + PVC 1Gi) | [`k8s/io-bound/statefulset.yaml`](k8s/io-bound/statefulset.yaml) | [`k8s/io-bound/service.yaml`](k8s/io-bound/service.yaml) | `30082` | `rafaellsb/poi-io-bound:latest` |
+
+### Resumo dos scripts auxiliares em `k8s/`
+- [`k8s/scripts/install-minikube.sh`](k8s/scripts/install-minikube.sh) — instala Docker, `kubectl` e Minikube na VM Ubuntu (22.04/24.04).
+- [`k8s/scripts/configure-nginx-proxy.sh`](k8s/scripts/configure-nginx-proxy.sh) — configura o Nginx da VM apontando `/cpu/`, `/memory/` e `/io/` para os NodePorts do Minikube.
+- [`k8s/scripts/verify-k8s.sh`](k8s/scripts/verify-k8s.sh) — valida pods/serviços no namespace `poi`, NodePorts, Nginx local e Load Balancer externo.
 
 ## Resultados
 
