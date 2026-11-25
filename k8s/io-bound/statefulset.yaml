@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: poi-io
+  namespace: poi
+  labels:
+    app: poi-io
+    app.kubernetes.io/name: poi-io
+    app.kubernetes.io/component: workload-io
+    app.kubernetes.io/part-of: poi-stack
+spec:
+  serviceName: poi-io-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: poi-io
+  template:
+    metadata:
+      labels:
+        app: poi-io
+        app.kubernetes.io/name: poi-io
+        app.kubernetes.io/component: workload-io
+        app.kubernetes.io/part-of: poi-stack
+    spec:
+      initContainers:
+        - name: fix-io-dir-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /data/io"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: io-data
+              mountPath: /data/io
+      containers:
+        - name: poi-io
+          image: rafaellsb/poi-io-bound:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: WORKERS
+              value: "1"
+            - name: IO_DIR
+              value: "/data/io"
+            - name: DEFAULT_SIZE_MB
+              value: "8"
+            - name: DEFAULT_ITERATIONS
+              value: "1"
+            - name: IO_CHUNK_KB
+              value: "1024"
+            - name: IO_FSYNC
+              value: "1"
+          volumeMounts:
+            - name: io-data
+              mountPath: /data/io
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+  volumeClaimTemplates:
+    - metadata:
+        name: io-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
