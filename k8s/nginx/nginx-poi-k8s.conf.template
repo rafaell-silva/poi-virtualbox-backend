@@ -1,0 +1,74 @@
+# nginx-poi-k8s.conf.template — reverse proxy na VM para os NodePorts do Minikube.
+#
+# Substitua __MINIKUBE_IP__ pelo resultado de `minikube ip` (ou use
+# k8s/scripts/configure-nginx-proxy.sh).
+#
+# O LB do OpenStack encaminha HTTP/80 para esta VM:80. O health check do LB
+# aponta para /health (resposta 200), independente dos pods.
+
+upstream poi_cpu_k8s {
+    server __MINIKUBE_IP__:30080;
+}
+
+upstream poi_memory_k8s {
+    server __MINIKUBE_IP__:30081;
+}
+
+upstream poi_io_k8s {
+    server __MINIKUBE_IP__:30082;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    access_log /var/log/nginx/poi-k8s-access.log;
+    error_log  /var/log/nginx/poi-k8s-error.log warn;
+
+    client_max_body_size 2m;
+
+    # Health check do Load Balancer do OpenStack.
+    location = /health {
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Redireciona prefixo sem barra final para evitar 404 nos upstreams.
+    location = /cpu    { return 301 /cpu/; }
+    location = /memory { return 301 /memory/; }
+    location = /io     { return 301 /io/; }
+
+    location /cpu/ {
+        proxy_pass http://poi_cpu_k8s/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;
+    }
+
+    location /memory/ {
+        proxy_pass http://poi_memory_k8s/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;
+    }
+
+    location /io/ {
+        proxy_pass http://poi_io_k8s/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        # fsync + leitura podem demorar em disco virtualizado/PVC.
+        proxy_read_timeout 300s;
+    }
+}
